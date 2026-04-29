@@ -138,6 +138,16 @@ export const saveSourceSettings   = (patch)      => request('PUT',  '/api/admin/
 export const testNaver            = (keyword)    => request('POST', '/api/admin/source-settings/test-naver', { keyword });
 export const testSearch           = (body)       => request('POST', '/api/admin/test-search', body);
 
+// 추적 링크
+export const listTrackingLinks    = ()           => request('GET',    '/api/tracking-links');
+export const createTrackingLink   = (body)       => request('POST',   '/api/tracking-links', body);
+export const updateTrackingLink   = (id, patch)  => request('PATCH',  `/api/tracking-links/${encodeURIComponent(id)}`, patch);
+export const deleteTrackingLink   = (id)         => request('DELETE', `/api/tracking-links/${encodeURIComponent(id)}`);
+export function trackingRedirectUrl(id) {
+  const base = window.location.origin;
+  return `${base}/r/${encodeURIComponent(id)}`;
+}
+
 // 부정 이슈 전용 PDF (filter=negative)
 export async function downloadNegativePdf(id) {
   const { blob, filename } = await fetchPdfBlob(reportPdfDownloadUrl(id) + '?filter=negative');

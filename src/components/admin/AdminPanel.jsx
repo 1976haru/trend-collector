@@ -8,6 +8,8 @@ import { fmtFull, fmtRelative } from '../../utils/datetime.js';
 import MailSettings   from './MailSettings.jsx';
 import SourceSettings from './SourceSettings.jsx';
 import TestSearch     from './TestSearch.jsx';
+import TrackingLinks  from './TrackingLinks.jsx';
+import ReportMetaSettings from './ReportMetaSettings.jsx';
 
 export default function AdminPanel() {
   const [feedback, setFeedback] = useState([]);
@@ -66,21 +68,31 @@ export default function AdminPanel() {
           style={{ ...S.tab, ...(tab === 'search' ? S.tabOn : {}) }}>
           🧪 검색 테스트
         </button>
+        <button onClick={() => setTab('tracking')}
+          style={{ ...S.tab, ...(tab === 'tracking' ? S.tabOn : {}) }}>
+          🔗 추적 링크
+        </button>
+        <button onClick={() => setTab('reportMeta')}
+          style={{ ...S.tab, ...(tab === 'reportMeta' ? S.tabOn : {}) }}>
+          📋 보고서 정보
+        </button>
         <button onClick={() => setTab('stats')}
           style={{ ...S.tab, ...(tab === 'stats' ? S.tabOn : {}) }}>
           📈 추출 실패 도메인 {stats.length > 0 && <span style={S.tabCount}>{stats.length}</span>}
         </button>
         <div style={{ flex: 1 }} />
-        {!['mail', 'source', 'search'].includes(tab) && (
+        {!['mail', 'source', 'search', 'tracking', 'reportMeta'].includes(tab) && (
           <button onClick={refresh} disabled={loading} style={S.refresh}>
             {loading ? '⏳' : '↻'} 새로고침
           </button>
         )}
       </div>
 
-      {tab === 'mail'   && <MailSettings />}
-      {tab === 'source' && <SourceSettings />}
-      {tab === 'search' && <TestSearch />}
+      {tab === 'mail'       && <MailSettings />}
+      {tab === 'source'     && <SourceSettings />}
+      {tab === 'search'     && <TestSearch />}
+      {tab === 'tracking'   && <TrackingLinks />}
+      {tab === 'reportMeta' && <ReportMetaSettings />}
 
       {error && <div style={S.err}>⚠️ {error}</div>}
 

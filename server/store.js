@@ -58,6 +58,15 @@ const DEFAULT_CONFIG = {
   alertOnGov:         false,
   alertOnCentral:     false,
   alertKeywords:      [],
+
+  // ── 제출용 보고서 메타 (Word 표지) ────────────
+  reportMeta: {
+    organization:   '법무부',
+    department:     '대변인실',
+    author:         '',
+    classification: '내부 검토용',
+    purpose:        '법무부 정책 및 주요 업무 관련 언론 보도 동향을 일일 단위로 모니터링하여 신속한 대응 자료로 활용함.',
+  },
 };
 
 let configCache = null;
@@ -214,6 +223,87 @@ export function safeMailSettings(s = {}) {
     feedbackTo:      s.feedbackTo || '',
     reportDefaultTo: s.reportDefaultTo || '',
   };
+}
+
+// ── 추적 링크 (보도자료 클릭 추적) ─────────────
+const TRACK_PATH = () => path.join(DATA_DIR, 'trackingLinks.json');
+
+function newTrackingId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+async function readTrackingArr() {
+  try {
+    const arr = JSON.parse(await fs.readFile(TRACK_PATH(), 'utf8'));
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+async function writeTrackingArr(arr) {
+  await ensureDirs();
+  await fs.writeFile(TRACK_PATH(), JSON.stringify(arr, null, 2), 'utf8');
+}
+
+export async function listTrackingLinks() {
+  const arr = await readTrackingArr();
+  // 최신 생성 우선
+  return arr.slice().sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+}
+
+export async function getTrackingLink(id) {
+  const arr = await readTrackingArr();
+  return arr.find(l => l.id === id) || null;
+}
+
+export async function createTrackingLink({ title, originalUrl, agency = '', department = '', notes = '' }) {
+  if (!title || !originalUrl) throw new Error('title, originalUrl 은 필수입니다.');
+  if (!/^https?:\/\//i.test(originalUrl)) throw new Error('originalUrl 은 http(s) URL 이어야 합니다.');
+  const arr = await readTrackingArr();
+  const link = {
+    id:            newTrackingId(),
+    title:         String(title).trim().slice(0, 200),
+    originalUrl:   String(originalUrl).trim(),
+    agency:        String(agency).trim().slice(0, 100),
+    department:    String(department).trim().slice(0, 100),
+    notes:         String(notes).trim().slice(0, 500),
+    createdAt:     new Date().toISOString(),
+    clickCount:    0,
+    lastClickedAt: null,
+  };
+  arr.push(link);
+  await writeTrackingArr(arr);
+  return link;
+}
+
+export async function updateTrackingLink(id, patch = {}) {
+  const arr = await readTrackingArr();
+  const idx = arr.findIndex(l => l.id === id);
+  if (idx < 0) return null;
+  const allowed = ['title', 'originalUrl', 'agency', 'department', 'notes'];
+  for (const k of allowed) if (k in patch) arr[idx][k] = String(patch[k] || '').trim();
+  if (patch.originalUrl && !/^https?:\/\//i.test(patch.originalUrl)) {
+    throw new Error('originalUrl 은 http(s) URL 이어야 합니다.');
+  }
+  arr[idx].updatedAt = new Date().toISOString();
+  await writeTrackingArr(arr);
+  return arr[idx];
+}
+
+export async function deleteTrackingLink(id) {
+  const arr = await readTrackingArr();
+  const filtered = arr.filter(l => l.id !== id);
+  if (filtered.length === arr.length) return false;
+  await writeTrackingArr(filtered);
+  return true;
+}
+
+export async function recordTrackingClick(id) {
+  const arr = await readTrackingArr();
+  const idx = arr.findIndex(l => l.id === id);
+  if (idx < 0) return null;
+  arr[idx].clickCount    = (arr[idx].clickCount || 0) + 1;
+  arr[idx].lastClickedAt = new Date().toISOString();
+  await writeTrackingArr(arr);
+  return arr[idx];
 }
 
 export async function setFeedbackRead(id, read = true) {

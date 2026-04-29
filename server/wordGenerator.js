@@ -1,13 +1,15 @@
 // ─────────────────────────────────────────────
-// wordGenerator.js — 보고서 → .docx 변환
-// 표지 → 요약(서론) → 본론(주요 이슈/기사) → 분석 → 결론 (기승전결)
-// PDF 가 실패해도 동일한 보고서를 Word 로 안정 생성한다.
+// wordGenerator.js — 기관 제출용 Word(.docx) 보고서
+// 표지 → 1.보고개요 → 2.종합분석 → 3.주요이슈 → 4.세부보도현황
+//      → 5.기관배포자료 홍보실적 → 6.국민관심도/조회지표
+//      → 7.시사점및대응방향 → 8.붙임
+// 문체: '~임 / ~함 / ~판단됨 / ~필요함' (공공기관 보고문)
 // ─────────────────────────────────────────────
 
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType,
-  PageBreak, LevelFormat, convertInchesToTwip,
+  PageBreak, convertInchesToTwip,
 } from 'docx';
 
 const FONT = 'Malgun Gothic';
@@ -22,39 +24,81 @@ function fmtDate(iso) {
     });
   } catch { return iso || ''; }
 }
+function fmtDateTitle(iso) {
+  try {
+    const d = new Date(iso);
+    return `${d.getFullYear()}년 ${String(d.getMonth() + 1).padStart(2, '0')}월 ${String(d.getDate()).padStart(2, '0')}일`;
+  } catch { return ''; }
+}
+
+// 공공기관 문체 변환 — 종결어미를 '~임/~함' 으로 통일
+function formalize(text) {
+  if (!text) return '';
+  let s = String(text).trim();
+  s = s.replace(/입니다\./g, '임.').replace(/입니다/g, '임');
+  s = s.replace(/합니다\./g, '함.').replace(/합니다/g, '함');
+  s = s.replace(/됩니다\./g, '됨.').replace(/됩니다/g, '됨');
+  s = s.replace(/있습니다\./g, '있음.').replace(/있습니다/g, '있음');
+  s = s.replace(/없습니다\./g, '없음.').replace(/없습니다/g, '없음');
+  s = s.replace(/이었습니다\./g, '이었음.').replace(/이었습니다/g, '이었음');
+  s = s.replace(/였습니다\./g, '였음.').replace(/였습니다/g, '였음');
+  s = s.replace(/것이다\./g, '것임.').replace(/것이다/g, '것임');
+  s = s.replace(/되었다\./g, '되었음.').replace(/되었다/g, '되었음');
+  s = s.replace(/하였다\./g, '하였음.').replace(/하였다/g, '하였음');
+  s = s.replace(/필요합\b/g, '필요함');
+  s = s.replace(/요구됩\b/g, '요구됨');
+  s = s.replace(/주의해야 ?합니다\.?/g, '주의가 요구됨.');
+  s = s.replace(/많이 나왔습니다\.?/g, '다수 보도됨.');
+  s = s.replace(/좋아요/g, '긍정 반응');
+  return s;
+}
 
 function P(text, opts = {}) {
   return new Paragraph({
     alignment: opts.align || AlignmentType.LEFT,
     spacing:   { before: opts.before ?? 60, after: opts.after ?? 60, line: 320 },
+    indent:    opts.indent ? { left: opts.indent } : undefined,
     children: [
       new TextRun({
         text:  String(text ?? ''),
         font:  FONT,
-        size:  opts.size  || 22,            // half-points (22 = 11pt)
+        size:  opts.size  || 22,
         bold:  !!opts.bold,
         color: opts.color || undefined,
+        italics: !!opts.italic,
       }),
     ],
   });
 }
 
-function H(text, level = HeadingLevel.HEADING_1) {
-  const size = level === HeadingLevel.HEADING_1 ? 32
-             : level === HeadingLevel.HEADING_2 ? 28
-             : 24;
+function H1(text) {
   return new Paragraph({
-    heading:  level,
-    spacing:  { before: 240, after: 120, line: 320 },
-    children: [new TextRun({ text: String(text), font: FONT, size, bold: true, color: '0d1117' })],
+    heading:  HeadingLevel.HEADING_1,
+    spacing:  { before: 320, after: 140, line: 320 },
+    children: [new TextRun({ text: String(text), font: FONT, size: 30, bold: true, color: '0d1117' })],
+  });
+}
+function H2(text) {
+  return new Paragraph({
+    heading:  HeadingLevel.HEADING_2,
+    spacing:  { before: 220, after: 100, line: 320 },
+    children: [new TextRun({ text: String(text), font: FONT, size: 26, bold: true, color: '0d1117' })],
   });
 }
 
-function bulletItem(text) {
+function bulletItem(text, opts = {}) {
   return new Paragraph({
-    bullet:   { level: 0 },
+    bullet:   { level: opts.level ?? 0 },
     spacing:  { before: 30, after: 30, line: 300 },
     children: [new TextRun({ text: String(text), font: FONT, size: 22 })],
+  });
+}
+
+function dashItem(text) {
+  return new Paragraph({
+    spacing:  { before: 30, after: 30, line: 300 },
+    indent:   { left: 200 },
+    children: [new TextRun({ text: `○ ${text}`, font: FONT, size: 22 })],
   });
 }
 
@@ -74,7 +118,7 @@ function cell(text, opts = {}) {
 function makeTable(headers, rows, widths) {
   const headerRow = new TableRow({
     tableHeader: true,
-    children: headers.map((h, i) => cell(h, { header: true, bold: true, width: widths?.[i], align: AlignmentType.LEFT })),
+    children: headers.map((h, i) => cell(h, { header: true, bold: true, width: widths?.[i], align: AlignmentType.CENTER })),
   });
   const bodyRows = rows.map(r => new TableRow({
     children: r.map((c, i) => cell(c, { width: widths?.[i] })),
@@ -83,10 +127,10 @@ function makeTable(headers, rows, widths) {
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [headerRow, ...bodyRows],
     borders: {
-      top:    { style: BorderStyle.SINGLE, size: 6,  color: 'CCCCCC' },
-      bottom: { style: BorderStyle.SINGLE, size: 6,  color: 'CCCCCC' },
-      left:   { style: BorderStyle.SINGLE, size: 6,  color: 'CCCCCC' },
-      right:  { style: BorderStyle.SINGLE, size: 6,  color: 'CCCCCC' },
+      top:    { style: BorderStyle.SINGLE, size: 8,  color: '0D1117' },
+      bottom: { style: BorderStyle.SINGLE, size: 8,  color: '0D1117' },
+      left:   { style: BorderStyle.SINGLE, size: 4,  color: 'CCCCCC' },
+      right:  { style: BorderStyle.SINGLE, size: 4,  color: 'CCCCCC' },
       insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: 'DDDDDD' },
       insideVertical:   { style: BorderStyle.SINGLE, size: 4, color: 'DDDDDD' },
     },
@@ -97,219 +141,413 @@ function pageBreak() {
   return new Paragraph({ children: [new PageBreak()] });
 }
 
-// 결론 자동 생성 (rule 기반)
-function buildConclusion(report) {
-  const r       = report || {};
-  const total   = (r.articles || []).length;
-  const sent    = r.sentiment || {};
-  const action  = r.actionRequired || [];
-  const trending= r.trending || [];
-  const lines   = [];
+// 감정/우선순위/평가 라벨 → 한국어 표기 (기관 보고용)
+function sentLabel(l)     { return l || '중립'; }
+function priorityLabel(p) { return p || '참고'; }
+function ratingLabel(r)   { return r || '일반'; }
 
-  if (total === 0) {
-    lines.push('금일은 수집된 보도가 없어 별도의 대응 사항이 없습니다.');
-    return lines;
+// ── 종합 분석 — 본문 문장 (공공기관 문체) ─────
+function buildOverviewSentences(report) {
+  const total = (report.articles || []).length;
+  const sent  = report.sentiment   || {};
+  const ag    = report.agencyStats || { agency: 0, press: total, byAgency: {} };
+  const pub   = report.publicityStats || {};
+  const trend = report.trending || [];
+  const lines = [];
+
+  lines.push(`금일 ${(report.keywords || []).join('·')} 관련 언론보도는 총 ${total}건으로 확인되었음.`);
+  if (sent.total) {
+    lines.push(`감정 분포는 긍정 ${sent.positive}건(${sent.positivePct}%), 부정 ${sent.negative}건(${sent.negativePct}%), 중립 ${sent.neutral}건(${sent.neutralPct}%)으로 집계되었으며, 전반적 분위기는 ${sent.overall || '중립'} 으로 판단됨.`);
   }
-
-  if (action.length === 0) {
-    lines.push(`총 ${total}건의 보도 중 즉각적인 대응이 필요한 이슈는 없습니다. 일상 모니터링을 유지합니다.`);
+  lines.push(`발행 주체별로는 기관 배포자료 ${ag.agency}건, 일반 언론보도 ${ag.press}건으로 구성됨.`);
+  if (pub.totalReCites > 0) {
+    lines.push(`기관 배포자료의 언론 재인용 건수는 총 ${pub.totalReCites}건이며, 이 중 중앙언론·방송사 인용 건수는 ${pub.centralCoverage}건임.`);
+  }
+  if (trend.length > 0) {
+    const list = trend.slice(0, 3).map(t => `${t.keyword}(${t.prev}→${t.curr})`).join(', ');
+    lines.push(`전일 대비 보도량이 급증한 키워드로는 ${list} 등이 식별됨.`);
   } else {
-    const urgent = action.filter(a => a.priority === '긴급').length;
-    const watch  = action.filter(a => a.priority === '주의').length;
-    lines.push(`대응 필요 이슈는 총 ${action.length}건 (긴급 ${urgent}건, 주의 ${watch}건) 으로 식별되었습니다.`);
-    if (urgent > 0) lines.push('• 긴급 이슈에 대해서는 관계 부서의 사실관계 확인 및 입장 정리가 즉시 권고됩니다.');
-    if (watch > 0)  lines.push('• 주의 이슈는 추이 관찰 및 필요 시 보도해명 준비가 권고됩니다.');
+    lines.push('전일 대비 보도량이 급증한 키워드는 관측되지 않았음.');
   }
-
   if ((sent.negativePct || 0) >= 50) {
-    lines.push(`⚠️ 부정 보도 비율이 ${sent.negativePct}% 로 절반을 넘어 위험 수위에 있습니다. 비판 논점에 대한 대응 메시지 정리가 필요합니다.`);
-  } else if ((sent.negativePct || 0) >= 30) {
-    lines.push(`부정 보도 비율 ${sent.negativePct}% 로 평소 대비 부담이 높은 편입니다.`);
+    lines.push(`다만 부정 보도 비율이 ${sent.negativePct}% 로 위험 수위를 상회하므로, 비판 논점에 대한 대응 메시지 정리가 필요함.`);
   }
-
-  if (trending.length > 0) {
-    const list = trending.slice(0, 3).map(t => `${t.keyword}(${t.prev}→${t.curr})`).join(', ');
-    lines.push(`📈 급상승 키워드: ${list}. 관련 부서의 모니터링 강화가 권고됩니다.`);
-  }
-
-  lines.push('본 보고는 자동 수집 결과를 기반으로 하며, 세부 사실관계는 원문 확인이 필요합니다.');
   return lines;
 }
 
-// 본론 — 주요 이슈 TOP
-function buildKeyIssuesSection(report) {
-  const blocks = [];
-  const negs = (report.negativeIssues || []).slice(0, 5);
-  const poss = (report.positiveIssues || []).slice(0, 5);
+// ── 7. 시사점 및 대응 방향 ─────────────────────
+function buildImplications(report) {
+  const sent     = report.sentiment   || {};
+  const action   = report.actionRequired || [];
+  const trending = report.trending || [];
+  const out = { positive: [], negative: [], depts: [], watch: [] };
 
-  blocks.push(H('Ⅲ. 본론 — 주요 이슈 및 기사', HeadingLevel.HEADING_1));
+  // 긍정 활용
+  if ((report.positiveIssues || []).length > 0) {
+    const top = (report.positiveIssues[0]?.title || '').slice(0, 60);
+    out.positive.push(`긍정 보도(${(report.positiveIssues || []).length}건)는 정책 홍보 자료로 적극 활용 가능함.`);
+    if (top) out.positive.push(`특히 「${top}」 보도의 SNS·홈페이지 재공유를 통해 대국민 인지도 제고가 기대됨.`);
+  } else {
+    out.positive.push('금일 별도의 긍정 활용 가능 이슈는 식별되지 않았음.');
+  }
 
-  if (negs.length) {
-    blocks.push(H(`🔴 부정 이슈 TOP ${negs.length}`, HeadingLevel.HEADING_2));
-    negs.forEach((a, i) => {
-      blocks.push(P(`${i + 1}) [${a.priority || '참고'}] ${a.title || ''}`, { bold: true, size: 22 }));
-      blocks.push(P(`매체: ${a.source || '미상'}  ·  키워드: ${a.keyword || ''}  ·  감정: ${a.sentiment?.label || ''}`, { size: 20, color: '555555' }));
-      const neg = (a.sentiment?.matchedKeywords?.negative || []).slice(0, 6).join(', ');
-      if (neg) blocks.push(P(`근거: ${neg}`, { size: 20, color: '555555' }));
-      if (a.briefLine) blocks.push(P(`📝 ${a.briefLine}`, { size: 20 }));
+  // 부정 대응
+  const urgent = action.filter(a => a.priority === '긴급');
+  const watch  = action.filter(a => a.priority === '주의');
+  if (urgent.length > 0) {
+    out.negative.push(`긴급 대응 이슈 ${urgent.length}건에 대해 사실관계 확인 후 보도해명 또는 입장 정리가 즉시 요구됨.`);
+    urgent.slice(0, 3).forEach(a => {
+      out.negative.push(`「${(a.title || '').slice(0, 70)}」 — [${a.source || '미상'}] (${a.sentiment?.label || ''})`);
     });
   }
-  if (poss.length) {
-    blocks.push(H(`🟢 긍정 이슈 TOP ${poss.length}`, HeadingLevel.HEADING_2));
-    poss.forEach((a, i) => {
-      blocks.push(P(`${i + 1}) ${a.title || ''}`, { bold: true, size: 22 }));
-      blocks.push(P(`매체: ${a.source || '미상'}  ·  키워드: ${a.keyword || ''}`, { size: 20, color: '555555' }));
-      if (a.briefLine) blocks.push(P(`📝 ${a.briefLine}`, { size: 20 }));
-    });
+  if (watch.length > 0) {
+    out.negative.push(`주의 단계 이슈 ${watch.length}건은 추이를 관찰하며 추가 확산 시 대응 자료 준비가 필요함.`);
   }
-  if (!negs.length && !poss.length) {
-    blocks.push(P('주요 이슈로 분류된 기사가 없습니다.', { size: 22 }));
+  if (urgent.length === 0 && watch.length === 0) {
+    out.negative.push('금일 즉각 대응이 필요한 부정 이슈는 식별되지 않았음.');
   }
-  return blocks;
-}
 
-// 기사 전체 표
-function buildArticleTable(articles) {
-  const headers = ['#', '우선순위', '제목', '매체', '감정', '발행처'];
-  const widths  = [4, 10, 50, 16, 10, 10];
-  const rows = articles.map((a, i) => [
-    String(i + 1),
-    a.priority || '참고',
-    (a.title || '').slice(0, 120),
-    a.source || '미상',
-    a.sentiment?.label || '',
-    a.articleSource === 'agency' ? '기관' : '언론',
-  ]);
-  return makeTable(headers, rows, widths);
+  // 관계 부서
+  const dept = Object.entries(report.departmentCounts || {}).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  if (dept.length) {
+    out.depts.push(`주요 관계 부서별 보도량은 ${dept.map(([k, v]) => `${k} ${v}건`).join(', ')} 임.`);
+    out.depts.push('각 관계 부서는 해당 보도 내용을 검토하여 필요 시 추가 자료 준비가 요구됨.');
+  } else {
+    out.depts.push('관계 부서 분류 결과가 없으므로 향후 부서 매칭 사전 보강이 필요함.');
+  }
+
+  // 향후 모니터링 키워드
+  const negKws = [...new Set((action || []).flatMap(a => a.sentiment?.matchedKeywords?.negative || []))].slice(0, 8);
+  if (trending.length > 0) {
+    out.watch.push(`급상승 키워드 ${trending.slice(0, 5).map(t => t.keyword).join(', ')} 에 대한 모니터링 강화가 요구됨.`);
+  }
+  if (negKws.length > 0) {
+    out.watch.push(`반복 등장한 부정 키워드(${negKws.join(', ')})는 향후 알림 등록을 검토할 필요가 있음.`);
+  }
+  if (!out.watch.length) {
+    out.watch.push('금일 추가 모니터링이 요구되는 신규 키워드는 식별되지 않았음.');
+  }
+  return out;
 }
 
 // ── 메인 — 보고서 → docx Buffer ────────────────
-export async function reportToDocx(report) {
-  const r = report || {};
+export async function reportToDocx(report, ctx = {}) {
+  const r           = report || {};
+  const meta        = ctx.reportMeta || r.reportMeta || {};
+  const trackingTotals = ctx.trackingTotals || { totalLinks: 0, totalClicks: 0, items: [] };
   const total       = (r.articles || []).length;
-  const sentiment   = r.sentiment   || {};
+  const sentiment   = r.sentiment    || {};
   const briefing    = r.briefingText || {};
-  const trending    = r.trending    || [];
-  const mediaCounts = r.mediaCounts || {};
-  const agency      = r.agencyStats || { agency: 0, press: total, byAgency: {} };
-  const conclusion  = buildConclusion(r);
-  const today       = fmtDate(r.generatedAt);
-  const titleStr    = r.title || `${today} 법무부 언론보도 분석 보고`;
+  const trending    = r.trending     || [];
+  const mediaCounts = r.mediaCounts  || {};
+  const ag          = r.agencyStats  || { agency: 0, press: total, byAgency: {} };
+  const pub         = r.publicityStats || { agencyDistributed: 0, totalReCites: 0, centralCoverage: 0, topAgencyItems: [] };
+  const today       = fmtDateTitle(r.generatedAt);
+  const titleStr    = `${today} ${meta.organization || '법무부'} 언론보도 모니터링 결과보고`;
+  const overview    = buildOverviewSentences(r);
+  const implications = buildImplications(r);
 
   const children = [];
 
-  // [1] 표지
+  // ────────────────────────────────────────────
+  // [표지]
+  // ────────────────────────────────────────────
   children.push(new Paragraph({
     alignment: AlignmentType.CENTER,
-    spacing:   { before: 720, after: 240 },
-    children:  [new TextRun({ text: 'Trend Collector', font: FONT, size: 24, color: '888888' })],
+    spacing:   { before: 1200, after: 200 },
+    children:  [new TextRun({ text: meta.classification || '내부 검토용', font: FONT, size: 22, bold: true, color: '991B1B' })],
   }));
   children.push(new Paragraph({
     alignment: AlignmentType.CENTER,
-    spacing:   { before: 120, after: 120 },
-    children:  [new TextRun({ text: titleStr, font: FONT, size: 40, bold: true, color: '0d1117' })],
+    spacing:   { before: 200, after: 120 },
+    children:  [new TextRun({ text: meta.organization || '법무부', font: FONT, size: 28, color: '555555' })],
   }));
   children.push(new Paragraph({
     alignment: AlignmentType.CENTER,
     spacing:   { before: 120, after: 600 },
-    children:  [new TextRun({ text: `${today} 작성`, font: FONT, size: 22, color: '555555' })],
+    children:  [new TextRun({ text: titleStr, font: FONT, size: 44, bold: true, color: '0d1117' })],
   }));
   children.push(makeTable(
-    ['항목', '내용'],
+    ['구분', '내용'],
     [
-      ['생성 일시',    fmtKST(r.generatedAt)],
-      ['수집 기간',    `${fmtDate(r.period?.from)} ~ ${fmtDate(r.period?.to)} (${r.period?.label || '-'})`],
-      ['검색 키워드',  (r.keywords || []).join(', ') || '—'],
-      ['총 기사 수',   `${total}건 (본문 추출 ${r.extractedCount || 0}/${total})`],
-      ['위험 등급',    `${r.riskLevel?.level || '-'} ${r.riskLevel?.reasons?.length ? '(' + r.riskLevel.reasons.join(', ') + ')' : ''}`],
-      ['보고서 ID',    r.id || ''],
+      ['작성일',     fmtDate(r.generatedAt)],
+      ['수집 기간',  `${fmtDate(r.period?.from)} ~ ${fmtDate(r.period?.to)} (${r.period?.label || '-'})`],
+      ['담당 부서',  meta.department || '대변인실'],
+      ['작성자',     meta.author     || '(자동 생성)'],
+      ['보안 등급',  meta.classification || '내부 검토용'],
+      ['보고서 ID',  r.id || ''],
     ],
     [25, 75],
   ));
+  children.push(P(' ', { size: 18 }));
+  children.push(P('※ 본 자료는 자동 수집·분석된 내부 검토용 자료이며, 외부 공개 시 사전 확인이 필요함.', {
+    align: AlignmentType.CENTER, size: 20, color: '777777',
+  }));
   children.push(pageBreak());
 
-  // [2] 요약 (서론)
-  children.push(H('Ⅰ. 요약 (서론)', HeadingLevel.HEADING_1));
-  children.push(P(briefing.총평 || r.summaryText || `금일 키워드(${(r.keywords||[]).join(', ')}) 관련 보도는 총 ${total}건이 수집되었습니다.`));
-  if (sentiment.total) {
-    children.push(P(
-      `감정 분포: 긍정 ${sentiment.positive}건(${sentiment.positivePct}%) · 부정 ${sentiment.negative}건(${sentiment.negativePct}%) · 중립 ${sentiment.neutral}건(${sentiment.neutralPct}%) — 전반: ${sentiment.overall || ''}`,
-      { size: 20 },
+  // ────────────────────────────────────────────
+  // 1. 보고 개요
+  // ────────────────────────────────────────────
+  children.push(H1('1. 보고 개요'));
+  children.push(makeTable(
+    ['항목', '내용'],
+    [
+      ['수집 목적',   formalize(meta.purpose || '주요 정책 및 업무 관련 언론 보도 동향을 파악하여 신속한 대응자료로 활용함.')],
+      ['수집 기간',   `${fmtDate(r.period?.from)} ~ ${fmtDate(r.period?.to)}`],
+      ['수집 키워드', (r.keywords || []).join(', ') || '—'],
+      ['수집 매체',   '구글 뉴스(전 세계 검색), 네이버 뉴스(국내 검색)' + (r.sourceCounts ? ` · 매체 다양성 ${Object.keys(r.sourceCounts).length}종` : '')],
+      ['총 수집 건수', `${total}건 (본문 추출 ${r.extractedCount || 0}건)`],
+    ],
+    [25, 75],
+  ));
+
+  // ────────────────────────────────────────────
+  // 2. 종합 분석
+  // ────────────────────────────────────────────
+  children.push(H1('2. 종합 분석'));
+  overview.forEach(line => children.push(dashItem(line)));
+
+  children.push(H2('가. 발행 주체별 분포'));
+  children.push(makeTable(
+    ['구분', '건수', '비율'],
+    [
+      ['기관 배포자료', `${ag.agency}건`,  `${total ? Math.round(ag.agency / total * 100) : 0}%`],
+      ['일반 언론보도', `${ag.press}건`,   `${total ? Math.round(ag.press / total * 100) : 0}%`],
+      ['합계',         `${total}건`, '100%'],
+    ],
+    [40, 30, 30],
+  ));
+
+  children.push(H2('나. 매체 유형별 분포'));
+  const mediaRows = Object.entries(mediaCounts).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (mediaRows.length) {
+    children.push(makeTable(
+      ['매체 유형', '건수', '비율'],
+      mediaRows.map(([k, v]) => [k, `${v}건`, `${total ? Math.round(v / total * 100) : 0}%`]),
+      [40, 30, 30],
+    ));
+  } else {
+    children.push(P('— 분류된 매체 정보 없음.', { size: 20 }));
+  }
+
+  // ────────────────────────────────────────────
+  // 3. 주요 이슈
+  // ────────────────────────────────────────────
+  children.push(H1('3. 주요 이슈'));
+  // 이슈 유형 집계
+  const issueCounts = {};
+  for (const a of (r.articles || [])) {
+    const t = a.sentiment?.issueType;
+    if (t && t !== '기타') issueCounts[t] = (issueCounts[t] || 0) + 1;
+  }
+  const issueRows = Object.entries(issueCounts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([type, cnt], i) => {
+    // 이슈에 해당하는 매체 / 감정 / 대응
+    const arts = (r.articles || []).filter(a => a.sentiment?.issueType === type);
+    const topMedia = topNamesFrom(arts.map(a => a.source).filter(Boolean), 3).join(', ');
+    const sents = arts.reduce((m, a) => { const l = a.sentiment?.label || '중립'; m[l] = (m[l] || 0) + 1; return m; }, {});
+    const sentStr = ['긍정', '부정', '중립'].filter(k => sents[k]).map(k => `${k}${sents[k]}`).join('/');
+    const urgent = arts.filter(a => a.priority === '긴급').length;
+    const watch  = arts.filter(a => a.priority === '주의').length;
+    const need   = urgent ? `긴급(${urgent})` : watch ? `주의(${watch})` : '참고';
+    return [String(i + 1), type, `${cnt}건`, topMedia || '—', sentStr || '—', need];
+  });
+  if (issueRows.length) {
+    children.push(makeTable(
+      ['순번', '이슈', '관련 기사 수', '주요 매체', '감정', '대응 필요도'],
+      issueRows,
+      [6, 22, 14, 28, 16, 14],
+    ));
+  } else {
+    children.push(P('— 이슈 분야로 분류된 기사가 없음.', { size: 20 }));
+  }
+
+  // ────────────────────────────────────────────
+  // 4. 세부 보도 현황
+  // ────────────────────────────────────────────
+  children.push(pageBreak());
+  children.push(H1('4. 세부 보도 현황'));
+  if (total > 0) {
+    const detailRows = (r.articles || []).map((a, i) => [
+      String(i + 1),
+      a.date || '',
+      truncate(a.title, 80),
+      a.source || '',
+      a.mediaType || '',
+      sentLabel(a.sentiment?.label),
+      truncate((a.departments || []).map(d => d.name).join(', '), 30) || '—',
+      truncate(a.url || '', 60),
+    ]);
+    children.push(makeTable(
+      ['#', '날짜', '제목', '매체', '유형', '감정', '관련 부서', '링크'],
+      detailRows,
+      [4, 12, 30, 12, 10, 8, 12, 12],
+    ));
+  } else {
+    children.push(P('— 수집된 기사가 없음.', { size: 20 }));
+  }
+
+  // ────────────────────────────────────────────
+  // 5. 기관 배포자료 홍보 실적
+  // ────────────────────────────────────────────
+  children.push(pageBreak());
+  children.push(H1('5. 기관 배포자료 홍보 실적'));
+  children.push(P(`기관에서 배포한 보도자료는 총 ${pub.agencyDistributed}건이며, 언론 재인용은 ${pub.totalReCites}건, 중앙언론·방송사 보도 포함 건수는 ${pub.centralCoverage}건으로 집계됨.`));
+  if (pub.topAgencyItems?.length) {
+    const rows = pub.topAgencyItems.map(it => {
+      const posCount = (it.sentiment === '긍정') ? 1 : 0;
+      const negCount = (it.sentiment === '부정') ? 1 : 0;
+      return [
+        it.agency || it.source || '—',
+        '1건',
+        `${it.reCiteCount}건`,
+        `${posCount}건`,
+        `${negCount}건`,
+        truncate(it.title, 60),
+      ];
+    });
+    children.push(makeTable(
+      ['기관/부서', '배포자료 수', '언론 재인용', '긍정 보도', '부정 보도', '주요 제목'],
+      rows,
+      [16, 10, 12, 10, 10, 42],
+    ));
+  } else {
+    children.push(P('— 기관 배포자료가 식별되지 않음. 추가 매체 등록 또는 키워드 보강 필요함.', { size: 20 }));
+  }
+
+  // 기관별 합계
+  const byAgency = Object.entries(ag.byAgency || {}).sort((a, b) => b[1] - a[1]);
+  if (byAgency.length) {
+    children.push(H2('기관별 배포 건수 합계'));
+    children.push(makeTable(
+      ['기관', '배포 건수'],
+      byAgency.map(([k, v]) => [k, `${v}건`]),
+      [70, 30],
     ));
   }
-  children.push(P(`기관 배포 ${agency.agency}건 · 언론 보도 ${agency.press}건`, { size: 20 }));
-  if (trending.length) {
-    children.push(P(`📈 급상승 키워드: ${trending.slice(0, 5).map(t => `${t.keyword}(${t.prev}→${t.curr})`).join(', ')}`, { size: 20, color: '9a3412' }));
-  }
 
-  // [3] 주요 보도 동향
-  children.push(H('Ⅱ. 주요 보도 동향', HeadingLevel.HEADING_1));
-  if (briefing.주요보도동향) children.push(P(briefing.주요보도동향));
-  const mediaRows = Object.entries(mediaCounts).filter(([, v]) => v > 0);
-  if (mediaRows.length) {
-    children.push(H('언론 유형별 건수', HeadingLevel.HEADING_3));
-    children.push(makeTable(['유형', '건수'], mediaRows.map(([k, v]) => [k, `${v}건`]), [70, 30]));
-  }
-  const byAgency = Object.entries(agency.byAgency || {}).sort((a, b) => b[1] - a[1]);
-  if (byAgency.length) {
-    children.push(H('기관 배포자료 — 매체별', HeadingLevel.HEADING_3));
-    children.push(makeTable(['매체', '건수'], byAgency.map(([k, v]) => [k, `${v}건`]), [70, 30]));
-  }
+  // ────────────────────────────────────────────
+  // 6. 국민 관심도 / 조회 지표
+  // ────────────────────────────────────────────
+  children.push(H1('6. 국민 관심도 · 조회 지표'));
+  children.push(P('외부 언론사 기사의 직접 조회수는 공개 API 미제공으로 확보가 어려운 환경이므로, 다음 대체 지표를 활용하여 관심도를 산출함.', { size: 22 }));
+  children.push(dashItem(`기관 배포자료 평균 중요도 점수: ${pub.averageImportance}`));
+  children.push(dashItem(`전체 매체 다양성: ${Object.keys(r.sourceCounts || {}).length}종 (Google / Naver 등)`));
+  children.push(dashItem(`중앙언론·방송사 인용 건수: ${pub.centralCoverage}건`));
+  children.push(dashItem(`동일 이슈 묶음 수: ${(r.groups || []).length}건 (재인용 확산 척도)`));
 
-  // [4] 본론 — 주요 이슈
-  children.push(...buildKeyIssuesSection(r));
-
-  // [5] 기사 전체 표
-  children.push(H('Ⅳ. 전체 기사 목록', HeadingLevel.HEADING_1));
-  if (total > 0) {
-    children.push(buildArticleTable(r.articles || []));
+  // 추적 링크 클릭 (외부 자료 기준)
+  children.push(H2('가. 추적 링크 클릭 현황'));
+  if (trackingTotals.totalLinks > 0) {
+    children.push(P(`등록된 추적 링크 ${trackingTotals.totalLinks}건의 누적 클릭 수는 ${trackingTotals.totalClicks}회임.`));
+    const top = (trackingTotals.items || [])
+      .slice()
+      .sort((a, b) => (b.clickCount || 0) - (a.clickCount || 0))
+      .slice(0, 8);
+    if (top.length) {
+      children.push(makeTable(
+        ['배포자료', '기관/부서', '클릭 수', '최근 클릭'],
+        top.map(t => [
+          truncate(t.title, 60),
+          t.agency || t.department || '—',
+          `${t.clickCount || 0}회`,
+          t.lastClickedAt ? fmtKST(t.lastClickedAt) : '—',
+        ]),
+        [50, 20, 12, 18],
+      ));
+    }
   } else {
-    children.push(P('수집된 기사가 없습니다.'));
+    children.push(P('— 등록된 추적 링크가 없음. 향후 보도자료 배포 시 추적 링크를 사용하여 클릭 지표를 확보할 필요가 있음.', { size: 20 }));
   }
 
-  // [6] 분석
-  children.push(H('Ⅴ. 분석', HeadingLevel.HEADING_1));
-  if (briefing.대응필요이슈) {
-    children.push(H('대응 필요 이슈', HeadingLevel.HEADING_2));
-    children.push(P(briefing.대응필요이슈));
-  }
-  if (briefing.관련부서참고사항) {
-    children.push(H('관련 부서 참고사항', HeadingLevel.HEADING_2));
-    children.push(P(briefing.관련부서참고사항));
-  }
-  // 부서별 분포
-  const dept = Object.entries(r.departmentCounts || {}).sort((a, b) => b[1] - a[1]);
-  if (dept.length) {
-    children.push(H('관련 부서별 보도량', HeadingLevel.HEADING_3));
-    children.push(makeTable(['부서', '건수'], dept.map(([k, v]) => [k, `${v}건`]), [70, 30]));
+  // ────────────────────────────────────────────
+  // 7. 시사점 및 대응 방향
+  // ────────────────────────────────────────────
+  children.push(pageBreak());
+  children.push(H1('7. 시사점 및 대응 방향'));
+  children.push(H2('가. 긍정 이슈 활용 방안'));
+  implications.positive.forEach(line => children.push(dashItem(line)));
+  children.push(H2('나. 부정 이슈 대응 필요사항'));
+  implications.negative.forEach(line => children.push(dashItem(line)));
+  children.push(H2('다. 관계 부서 참고사항'));
+  implications.depts.forEach(line => children.push(dashItem(line)));
+  children.push(H2('라. 향후 모니터링 필요 키워드'));
+  implications.watch.forEach(line => children.push(dashItem(line)));
+
+  // ────────────────────────────────────────────
+  // 8. 붙임
+  // ────────────────────────────────────────────
+  children.push(pageBreak());
+  children.push(H1('8. 붙임'));
+
+  children.push(H2('붙임 1. 전체 기사 목록'));
+  if (total > 0) {
+    children.push(makeTable(
+      ['#', '제목', '매체', '감정'],
+      (r.articles || []).map((a, i) => [
+        String(i + 1),
+        truncate(a.title, 90),
+        a.source || '—',
+        sentLabel(a.sentiment?.label),
+      ]),
+      [6, 64, 20, 10],
+    ));
+  } else {
+    children.push(P('— 해당 사항 없음.', { size: 20 }));
   }
 
-  // [7] 결론 / 권고
-  children.push(H('Ⅵ. 결론 및 권고', HeadingLevel.HEADING_1));
-  conclusion.forEach(line => children.push(bulletItem(line)));
+  children.push(H2('붙임 2. 부정 이슈 목록'));
+  const negs = (r.negativeIssues || []);
+  if (negs.length) {
+    children.push(makeTable(
+      ['#', '제목', '매체', '대응 필요도'],
+      negs.map((a, i) => [
+        String(i + 1),
+        truncate(a.title, 90),
+        a.source || '—',
+        priorityLabel(a.priority),
+      ]),
+      [6, 64, 20, 10],
+    ));
+  } else {
+    children.push(P('— 부정으로 분류된 이슈 없음.', { size: 20 }));
+  }
+
+  children.push(H2('붙임 3. 기관 배포자료 목록'));
+  const agencyArts = (r.articles || []).filter(a => a.articleSource === 'agency');
+  if (agencyArts.length) {
+    children.push(makeTable(
+      ['#', '제목', '기관', '재인용', '평가'],
+      agencyArts.map((a, i) => [
+        String(i + 1),
+        truncate(a.title, 80),
+        a.source || '—',
+        `${a.reCiteCount || 0}건`,
+        ratingLabel(a.publicityRating),
+      ]),
+      [6, 54, 16, 12, 12],
+    ));
+  } else {
+    children.push(P('— 식별된 기관 배포자료 없음.', { size: 20 }));
+  }
 
   // 푸터 마무리
   children.push(P(' ', { size: 18 }));
-  children.push(P('— 본 보고서는 Trend Collector 가 자동 생성한 내부 업무용 자료입니다. —', {
+  children.push(P('— 본 보고서는 Trend Collector 가 자동 생성한 내부 업무용 자료이며, 외부 배포 시 검토가 필요함. —', {
     align: AlignmentType.CENTER, size: 18, color: '888888',
   }));
 
   const doc = new Document({
     creator: 'Trend Collector',
     title:   titleStr,
-    description: '법무부 언론보도 일일 분석 보고서',
-    styles: {
-      default: {
-        document: { run: { font: FONT, size: 22 } },
-      },
-    },
+    description: '기관 제출용 언론보도 모니터링 결과보고',
+    styles: { default: { document: { run: { font: FONT, size: 22 } } } },
     sections: [{
       properties: {
         page: {
           margin: {
-            top:    convertInchesToTwip(0.7),
+            top:    convertInchesToTwip(0.8),
             right:  convertInchesToTwip(0.7),
-            bottom: convertInchesToTwip(0.7),
+            bottom: convertInchesToTwip(0.8),
             left:   convertInchesToTwip(0.7),
           },
         },
@@ -319,4 +557,15 @@ export async function reportToDocx(report) {
   });
 
   return Packer.toBuffer(doc);
+}
+
+// ── 헬퍼 ────────────────────────────────────
+function topNamesFrom(arr, n) {
+  const m = {};
+  for (const v of arr) m[v] = (m[v] || 0) + 1;
+  return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k);
+}
+function truncate(s, n) {
+  s = String(s || '');
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }

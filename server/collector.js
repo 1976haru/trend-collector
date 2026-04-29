@@ -606,6 +606,55 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     byAgency: countAgencies(processed),
   };
 
+  // 7.4.1) 홍보 효과 지표 (publicityStats)
+  // 외부 조회수는 확보 어려우므로 대체 지표:
+  //   - 언론 재인용 수: groups.count - 1 (그룹의 다른 보도)
+  //   - 매체 다양성: group.sources.length
+  //   - 중앙언론 보도 여부: 그룹의 sources 에 중앙/방송 매체 포함
+  //   - 중요도 점수: 매체 수 × 1 + 부정 키워드 × -1.5 + 중앙 × 3 + 긍정 × 1
+  const groupBySig = new Map(groups.map(g => [g.signature, g]));
+  for (const a of processed) {
+    const sig = normalize(a.title || '').slice(0, 12) || normalize(a.title || '');
+    const g   = groupBySig.get(sig);
+    a.reCiteCount  = g ? Math.max(0, (g.count || 1) - 1) : 0;
+    a.mediaSpread  = g ? (g.sources || []).length : (a.source ? 1 : 0);
+    const sources  = g ? (g.sources || []) : [a.source];
+    a.centralCoverage = sources.some(src => {
+      const t = classifyMedia(src);
+      return t === '중앙언론' || t === '방송사';
+    });
+    const negCount = a.sentiment?.matchedKeywords?.negative?.length || 0;
+    const posCount = a.sentiment?.matchedKeywords?.positive?.length || 0;
+    const score    = a.mediaSpread * 1 + (a.centralCoverage ? 3 : 0) + posCount * 1 - negCount * 1.5;
+    a.importanceScore = Number(score.toFixed(2));
+    // 평가 등급 (관심 높음/확산 양호/일반/대응 필요)
+    let rating;
+    if (negCount >= 3 && (a.centralCoverage || a.reCiteCount >= 3)) rating = '대응 필요';
+    else if (a.centralCoverage && a.reCiteCount >= 4)               rating = '관심 높음';
+    else if (a.reCiteCount >= 5)                                     rating = '확산 양호';
+    else if (a.centralCoverage)                                      rating = '파급 가능';
+    else                                                              rating = '일반';
+    a.publicityRating = rating;
+  }
+  const publicityStats = {
+    agencyDistributed: agencyArticles.length,
+    totalReCites:      agencyArticles.reduce((s, a) => s + (a.reCiteCount || 0), 0),
+    centralCoverage:   agencyArticles.filter(a => a.centralCoverage).length,
+    averageImportance: agencyArticles.length
+      ? Number((agencyArticles.reduce((s, a) => s + (a.importanceScore || 0), 0) / agencyArticles.length).toFixed(2))
+      : 0,
+    topAgencyItems: agencyArticles
+      .slice()
+      .sort((a, b) => (b.importanceScore || 0) - (a.importanceScore || 0))
+      .slice(0, 10)
+      .map(a => ({
+        id: a.id, title: a.title, source: a.source, agency: a.source,
+        reCiteCount: a.reCiteCount, mediaSpread: a.mediaSpread,
+        centralCoverage: a.centralCoverage, sentiment: a.sentiment?.label,
+        rating: a.publicityRating, score: a.importanceScore,
+      })),
+  };
+
   // 7.5) 본문 추출 통계
   const extractedCount = processed.filter(a => a.extracted).length;
   const extractionFailed = processed
@@ -698,6 +747,7 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     departmentCounts,
     sourceCounts,
     agencyStats,
+    publicityStats,
     sentiment,
     trending,
     groups,

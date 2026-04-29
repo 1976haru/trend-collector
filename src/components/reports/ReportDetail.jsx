@@ -4,11 +4,12 @@
 // 기사 본문은 토글로 펼치기/접기.
 // ─────────────────────────────────────────────
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   downloadReportPdf, previewReportPdf, reportHtmlDebugUrl,
   reextractReport, reextractArticle, downloadNegativePdf,
   downloadReportWord, downloadReportHtml, downloadReportExcel,
+  listTrackingLinks,
 } from '../../services/api.js';
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 
@@ -182,6 +183,87 @@ function ArticleItem({ idx, art, viewMode = 'paper', onReextract }) {
   );
 }
 
+// 홍보 효과 카드 — 배포자료 / 재인용 / 클릭 수 / 등급
+function PublicityCard({ report, tracking }) {
+  const ag  = report.agencyStats   || { agency: 0, press: 0, byAgency: {} };
+  const pub = report.publicityStats || { agencyDistributed: 0, totalReCites: 0, centralCoverage: 0, topAgencyItems: [] };
+  // 등급 산정
+  const clicks = tracking?.totalClicks || 0;
+  const recites = pub.totalReCites || 0;
+  const central = pub.centralCoverage || 0;
+  const negCount = (report.negativeIssues || []).length;
+  let grade = '일반', gColor = '#888';
+  if (negCount >= 3 && (central > 0 || recites >= 3)) { grade = '대응 필요'; gColor = '#dc2626'; }
+  else if (clicks >= 100 && central > 0)              { grade = '관심 매우 높음'; gColor = '#16a34a'; }
+  else if (clicks >= 100 || recites >= 5)             { grade = '확산 양호'; gColor = '#16a34a'; }
+  else if (central > 0)                                { grade = '파급 가능'; gColor = '#f59e0b'; }
+  return (
+    <div style={pc.wrap}>
+      <div style={pc.head}>📣 홍보 효과 요약</div>
+      <div style={pc.grid}>
+        <div style={pc.cell}>
+          <div style={pc.label}>기관 배포자료</div>
+          <div style={pc.value}>{ag.agency}건</div>
+          <div style={pc.sub}>전체 {ag.agency + ag.press}건 중</div>
+        </div>
+        <div style={pc.cell}>
+          <div style={pc.label}>언론 재인용</div>
+          <div style={pc.value}>{recites}건</div>
+          <div style={pc.sub}>중앙·방송사 인용 {central}건</div>
+        </div>
+        <div style={pc.cell}>
+          <div style={pc.label}>추적 링크 클릭</div>
+          <div style={{ ...pc.value, color: clicks >= 100 ? '#16a34a' : '#0d1117' }}>{clicks}회</div>
+          <div style={pc.sub}>등록 링크 {tracking?.count || 0}건</div>
+        </div>
+        <div style={pc.cell}>
+          <div style={pc.label}>홍보 효과 등급</div>
+          <div style={{ ...pc.value, color: gColor }}>{grade}</div>
+          <div style={pc.sub}>평균 중요도 {pub.averageImportance || 0}</div>
+        </div>
+      </div>
+      {pub.topAgencyItems?.length > 0 && (
+        <div style={pc.topBox}>
+          <div style={pc.topLabel}>🥇 평가 TOP {Math.min(3, pub.topAgencyItems.length)}</div>
+          {pub.topAgencyItems.slice(0, 3).map((it, i) => (
+            <div key={it.id || i} style={pc.topRow}>
+              <span style={pc.topRating(it.rating)}>{it.rating}</span>
+              <span style={pc.topTitle}>{it.title}</span>
+              <span style={pc.topMeta}>[{it.source}] · 재인용 {it.reCiteCount}건</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const pc = {
+  wrap:  { background: 'white', borderRadius: 12, padding: '12px 14px', boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
+  head:  { fontSize: 11, color: '#888', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 9 },
+  grid:  { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 },
+  cell:  { background: '#fafaf6', borderRadius: 8, padding: '9px 11px', border: '1px solid #f0ede8' },
+  label: { fontSize: 11, color: '#888', fontWeight: 600, marginBottom: 3 },
+  value: { fontSize: 18, fontWeight: 800, color: '#0d1117', lineHeight: 1.2 },
+  sub:   { fontSize: 11, color: '#666', marginTop: 3 },
+  topBox:{ marginTop: 9, background: '#f8f6f2', borderRadius: 8, padding: '9px 11px' },
+  topLabel: { fontSize: 11, color: '#888', fontWeight: 700, marginBottom: 5 },
+  topRow:{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 0', fontSize: 12.5 },
+  topTitle:{ flex: 1, color: '#0d1117', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  topMeta: { color: '#666', fontSize: 11.5 },
+  topRating: (r) => {
+    const map = {
+      '관심 높음':   { bg: '#dcfce7', fg: '#166534' },
+      '확산 양호':   { bg: '#dbeafe', fg: '#1d4ed8' },
+      '파급 가능':   { bg: '#fef3c7', fg: '#92400e' },
+      '대응 필요':   { bg: '#fee2e2', fg: '#991b1b' },
+      '일반':       { bg: '#f1f5f9', fg: '#475569' },
+    };
+    const v = map[r] || map['일반'];
+    return { background: v.bg, color: v.fg, fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 10, whiteSpace: 'nowrap' };
+  },
+};
+
 // 보고용 한 눈 요약 카드 — 분위기 / 이슈 유형 / 긴급 대응 / 기관 vs 언론
 function HighlightCard({ report }) {
   const sent  = report.sentiment   || {};
@@ -263,6 +345,15 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
   const [viewMode,  setViewMode]  = useState('paper');     // 'paper' | 'analytic' | 'failures'
   const [negFirst,  setNegFirst]  = useState(true);
   const [reextBusy, setReextBusy] = useState('');     // 'all' | 'failed' | id | ''
+  const [tracking, setTracking]   = useState({ count: 0, totalClicks: 0, items: [] });
+
+  useEffect(() => {
+    let alive = true;
+    listTrackingLinks()
+      .then(r => alive && setTracking({ count: r.count || 0, totalClicks: r.totalClicks || 0, items: r.items || [] }))
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   if (!report) return null;
   const articlesRaw = report.articles || [];
@@ -400,8 +491,8 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
         <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn} title="PDF 다운로드">
           {pdfBusy === 'download' ? '⏳' : '📄 PDF'}
         </button>
-        <button onClick={onDownloadWord} disabled={!!pdfBusy} style={S.wordBtn} title="Word(.docx) 다운로드 — PDF 실패 시 대체">
-          {pdfBusy === 'word' ? '⏳' : '📝 Word'}
+        <button onClick={onDownloadWord} disabled={!!pdfBusy} style={S.wordBtn} title="제출용 Word(.docx) — 기관 보고 양식">
+          {pdfBusy === 'word' ? '⏳' : '📝 제출용 Word'}
         </button>
         <button onClick={onDownloadHtml} disabled={!!pdfBusy} style={S.htmlBtn} title="HTML 다운로드 — 브라우저로 열고 Ctrl+P">
           {pdfBusy === 'html' ? '⏳' : '🌐 HTML'}
@@ -682,6 +773,11 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
             </div>
           )}
         </div>
+      )}
+
+      {/* 홍보 효과 카드 — 기관 배포 / 재인용 / 클릭 / 등급 */}
+      {report.agencyStats && (
+        <PublicityCard report={report} tracking={tracking} />
       )}
 
       {/* 기관 배포 vs 언론 보도 — 홍보 실적 */}

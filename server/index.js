@@ -9,7 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
-import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings } from './store.js';
+import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
+  listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick } from './store.js';
 import { runCollection, reextractReport, fetchSourceRaw } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
@@ -169,6 +170,21 @@ app.post('/api/feedback', async (req, res) => {
   }
 });
 
+// ── 무인증 — 추적 링크 redirect (/r/:id) ─────
+// SPA catch-all 보다 먼저 등록한다. 잘못된 id 는 홈으로 보낸다.
+app.get('/r/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').replace(/[^a-z0-9]/gi, '');
+    if (!id) return res.redirect(302, '/');
+    const link = await recordTrackingClick(id);
+    if (!link) return res.redirect(302, '/');
+    return res.redirect(302, link.originalUrl);
+  } catch (e) {
+    console.error('[tracking] redirect error:', e.message);
+    res.redirect(302, '/');
+  }
+});
+
 // ── 보호된 API ───────────────────────────────
 const api = express.Router();
 api.use(requireAuth);
@@ -190,6 +206,7 @@ api.put('/config', async (req, res) => {
     'useGoogleNews', 'useNaverNews',
     'googleTrendsEnabled', 'trendsTimeframe', 'trendsGeo',
     'articleViewMode', 'sortNegativeFirst',
+    'reportMeta',
   ];
   const patch = {};
   for (const k of allowed) {
@@ -465,6 +482,46 @@ api.post('/admin/source-settings/test-naver', async (req, res) => {
   }
 });
 
+// ── 추적 링크 (보도자료 클릭 카운트) ───────────
+api.get('/tracking-links', async (_req, res) => {
+  try {
+    const items = await listTrackingLinks();
+    const totalClicks = items.reduce((s, l) => s + (l.clickCount || 0), 0);
+    res.json({ items, count: items.length, totalClicks });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+api.post('/tracking-links', async (req, res) => {
+  try {
+    const link = await createTrackingLink(req.body || {});
+    res.json({ ok: true, link });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+api.patch('/tracking-links/:id', async (req, res) => {
+  try {
+    const link = await updateTrackingLink(req.params.id, req.body || {});
+    if (!link) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, link });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+api.delete('/tracking-links/:id', async (req, res) => {
+  try {
+    const ok = await deleteTrackingLink(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── 관리자: 도메인별 본문 추출 실패 통계 ────────
 api.get('/admin/extraction-stats', async (_req, res) => {
   try {
@@ -632,7 +689,14 @@ app.get('/api/reports/:id/pdf', requireAuth, (req, res) => {
 app.get('/api/reports/:id/word/download', requireAuth, async (req, res) => {
   try {
     const report = await loadReport(req.params.id);
-    const buf    = await reportToDocx(report);
+    const cfg    = await loadConfig();
+    const tlinks = await listTrackingLinks();
+    const trackingTotals = {
+      totalLinks:  tlinks.length,
+      totalClicks: tlinks.reduce((s, l) => s + (l.clickCount || 0), 0),
+      items:       tlinks,
+    };
+    const buf    = await reportToDocx(report, { reportMeta: cfg.reportMeta, trackingTotals });
     const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
     const fileName = `trend-report-${dateStr}.docx`;
     res.set('Content-Type',        'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -673,7 +737,13 @@ app.get('/api/reports/:id/html-download', requireAuth, async (req, res) => {
 app.get('/api/reports/:id/excel/download', requireAuth, async (req, res) => {
   try {
     const report = await loadReport(req.params.id);
-    const buf    = await reportToXlsx(report);
+    const tlinks = await listTrackingLinks();
+    const tracking = {
+      totalLinks:  tlinks.length,
+      totalClicks: tlinks.reduce((s, l) => s + (l.clickCount || 0), 0),
+      items:       tlinks,
+    };
+    const buf    = await reportToXlsx(report, { tracking });
     const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
     const fileName = `trend-report-${dateStr}.xlsx`;
     res.set('Content-Type',        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
