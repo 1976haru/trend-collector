@@ -10,7 +10,8 @@ let browserPromise;
 
 export function ensureBrowser() {
   if (browserPromise) return browserPromise;
-  browserPromise = puppeteer.launch({
+
+  const launchOpts = {
     headless: 'new',
     args: [
       '--no-sandbox',
@@ -19,8 +20,26 @@ export function ensureBrowser() {
       '--disable-gpu',
       '--font-render-hinting=medium',
     ],
-  }).catch(err => {
+  };
+  // 명시적 Chrome 경로가 있으면 사용 (Render 등 캐시 문제 회피)
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  browserPromise = puppeteer.launch(launchOpts).catch(err => {
     browserPromise = null;
+    // 'Could not find Chrome' / 'Chromium' 오류를 사용자 친화적으로 변환
+    const msg = err?.message || String(err);
+    if (/Could not find (Chrome|Chromium|browser)|Browser was not found/i.test(msg)) {
+      const friendly = new Error(
+        'PDF 생성용 Chrome 이 서버에 설치되지 않았습니다. 관리자에게 배포 설정 확인을 요청하세요. ' +
+        '(Render 의 경우 buildCommand 에 `npx puppeteer browsers install chrome` 이 포함되어 있는지, ' +
+        'PUPPETEER_CACHE_DIR 환경변수가 빌드/런타임에 동일하게 설정되어 있는지 점검하세요.)'
+      );
+      friendly.code   = 'CHROME_NOT_FOUND';
+      friendly.detail = msg;
+      throw friendly;
+    }
     throw err;
   });
   return browserPromise;

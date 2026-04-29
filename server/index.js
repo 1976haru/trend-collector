@@ -594,8 +594,9 @@ app.get('/api/reports/:id/pdf/preview', requireAuth, async (req, res) => {
     res.send(buf);
   } catch (e) {
     console.error('[pdf:preview] generation error:', e.stack || e.message);
-    res.status(500).type('text/html; charset=utf-8').send(
-      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 미리보기 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}</pre>`
+    const status = e.code === 'CHROME_NOT_FOUND' ? 503 : 500;
+    res.status(status).type('text/html; charset=utf-8').send(
+      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 미리보기 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}${e.detail ? `\n\n원본 오류: ${e.detail.replace(/</g, '&lt;')}` : ''}</pre>`
     );
   }
 });
@@ -610,8 +611,9 @@ app.get('/api/reports/:id/pdf/download', requireAuth, async (req, res) => {
     res.send(buf);
   } catch (e) {
     console.error('[pdf:download] generation error:', e.stack || e.message);
-    res.status(500).type('text/html; charset=utf-8').send(
-      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 다운로드 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}</pre>`
+    const status = e.code === 'CHROME_NOT_FOUND' ? 503 : 500;
+    res.status(status).type('text/html; charset=utf-8').send(
+      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 다운로드 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}${e.detail ? `\n\n원본 오류: ${e.detail.replace(/</g, '&lt;')}` : ''}</pre>`
     );
   }
 });
