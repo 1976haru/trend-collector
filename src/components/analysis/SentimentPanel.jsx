@@ -5,9 +5,6 @@
 
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { fmtDay: fmtDay } from '../../utils/dateUtils.js';
-
-// dateUtils에서 formatShort를 import하려면:
 import { formatShort } from '../../utils/dateUtils.js';
 
 const SC = { 긍정: '#22c55e', 부정: '#ef4444', 중립: '#94a3b8' };

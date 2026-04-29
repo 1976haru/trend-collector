@@ -1,11 +1,13 @@
 {
-  "name": "trend-collector-v1",
-  "version": "1.0.0",
-  "description": "전국 언론보도 자동 수집 시스템 - Trend Collector v1",
+  "name": "trend-collector",
+  "version": "1.1.0",
+  "private": true,
+  "description": "전국 언론보도 자동 수집 + 요약 + PDF/메일 발송 시스템",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --port 4173",
     "deploy": "npm run build && gh-pages -d dist"
   },
   "dependencies": {
@@ -15,8 +17,8 @@
     "@emailjs/browser": "^3.11.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.0.0",
-    "vite": "^4.4.5",
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.0.10",
     "gh-pages": "^6.0.0"
   }
 }

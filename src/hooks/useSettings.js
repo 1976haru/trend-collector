@@ -47,6 +47,32 @@ export function useSettings() {
     });
   }, []);
 
+  // ── 제외 키워드 관리 ────────────────────────
+
+  const addExclude = useCallback((kw) => {
+    const k = kw.trim();
+    if (!k) return;
+    setSettings(prev => {
+      const list = prev.excludeKeywords || [];
+      if (list.includes(k)) return prev;
+      const next = { ...prev, excludeKeywords: [...list, k] };
+      saveSettings(next);
+      return next;
+    });
+  }, []);
+
+  const removeExclude = useCallback((kw) => {
+    setSettings(prev => {
+      const next = { ...prev, excludeKeywords: (prev.excludeKeywords || []).filter(k => k !== kw) };
+      saveSettings(next);
+      return next;
+    });
+  }, []);
+
+  const setFilterAds         = useCallback((on)   => update({ filterAds: !!on }), [update]);
+  const setRequireAllInclude = useCallback((on)   => update({ requireAllInclude: !!on }), [update]);
+  const setReportType        = useCallback((type) => update({ reportType: type }), [update]);
+
   // ── 이메일 설정 업데이트 ──────────────────
 
   const updateEmailConfig = useCallback((cfg) => {
@@ -66,6 +92,11 @@ export function useSettings() {
     update,
     addKeyword,
     removeKeyword,
+    addExclude,
+    removeExclude,
+    setFilterAds,
+    setRequireAllInclude,
+    setReportType,
     updateEmailConfig,
     updateKakaoConfig,
   };

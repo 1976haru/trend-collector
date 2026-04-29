@@ -11,13 +11,20 @@ export function saveSettings(settings) {
 }
 
 export function loadSettings() {
-  return _get(STORAGE_KEYS.SETTINGS) ?? {
-    keywords: [],
+  const stored = _get(STORAGE_KEYS.SETTINGS);
+  const defaults = {
+    keywords:        [],
+    excludeKeywords: [],
+    requireAllInclude: false,
+    filterAds:       true,
+    reportType:      'daily',
     emailConfig: { provider: 'gmail', addresses: [''], publicKey: '', serviceId: '', templateId: '' },
     kakaoConfig: { jsKey: '', loggedIn: false },
     notifyChannels: { email: false, kakao: false, browser: false },
     schedules: [],
   };
+  // 누락된 새 필드를 기본값으로 채워 하위 호환 유지
+  return { ...defaults, ...(stored || {}) };
 }
 
 // ── 기사 저장/불러오기 ──────────────────────

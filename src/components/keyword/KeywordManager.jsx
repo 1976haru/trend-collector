@@ -1,23 +1,34 @@
 // ─────────────────────────────────────────────
-// KeywordManager.jsx — 키워드 추가·삭제·프리셋
+// KeywordManager.jsx — 키워드 추가·삭제·프리셋 + 제외 + 옵션
 // ─────────────────────────────────────────────
 
 import { useState } from 'react';
 import { PRESET_KEYWORDS } from '../../constants/config.js';
 
-export default function KeywordManager({ keywords, onAdd, onRemove, intervalH, onIntervalChange, onCollect, onAutoToggle, autoMode, loading }) {
-  const [input, setInput] = useState('');
+export default function KeywordManager({
+  keywords, excludeKeywords = [], filterAds = true, requireAllInclude = false,
+  onAdd, onRemove, onAddExclude, onRemoveExclude,
+  onToggleFilterAds, onToggleRequireAll,
+  intervalH, onIntervalChange, onCollect, onAutoToggle, autoMode, loading,
+}) {
+  const [input,    setInput]    = useState('');
+  const [excInput, setExcInput] = useState('');
 
   function handleAdd() {
     const k = input.trim();
     if (k) { onAdd(k); setInput(''); }
   }
 
+  function handleAddExclude() {
+    const k = excInput.trim();
+    if (k && onAddExclude) { onAddExclude(k); setExcInput(''); }
+  }
+
   return (
     <div>
       {/* 키워드 입력 */}
       <div style={S.panel}>
-        <div style={S.label}>🏷 검색 키워드</div>
+        <div style={S.label}>🏷 검색(포함) 키워드</div>
         <div style={S.row}>
           <input
             style={S.inp}
@@ -54,6 +65,48 @@ export default function KeywordManager({ keywords, onAdd, onRemove, intervalH, o
             </button>
           ))}
         </div>
+
+        {/* AND 모드 토글 */}
+        {onToggleRequireAll && (
+          <label style={S.toggle}>
+            <input type="checkbox" checked={requireAllInclude}
+              onChange={e => onToggleRequireAll(e.target.checked)} />
+            <span>모든 키워드를 포함하는 기사만 (AND 검색)</span>
+          </label>
+        )}
+      </div>
+
+      {/* 제외 키워드 */}
+      <div style={S.panel}>
+        <div style={S.label}>🚫 제외 키워드</div>
+        <div style={S.row}>
+          <input
+            style={S.inp}
+            placeholder="제외할 키워드 입력 후 Enter (예: 광고, 부고)"
+            value={excInput}
+            onChange={e => setExcInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleAddExclude()}
+          />
+          <button style={S.btnDark} onClick={handleAddExclude}>추가</button>
+        </div>
+        {excludeKeywords.length > 0 && (
+          <div style={S.tagWrap}>
+            {excludeKeywords.map(k => (
+              <span key={k} style={{ ...S.tag, background: '#7f1d1d' }}>
+                {k}
+                <button style={S.rm} onClick={() => onRemoveExclude && onRemoveExclude(k)}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {onToggleFilterAds && (
+          <label style={S.toggle}>
+            <input type="checkbox" checked={filterAds}
+              onChange={e => onToggleFilterAds(e.target.checked)} />
+            <span>광고/홍보성 기사 자동 필터링</span>
+          </label>
+        )}
       </div>
 
       {/* 수집 주기 */}
@@ -98,6 +151,7 @@ const S = {
   presetWrap: { display: 'flex', flexWrap: 'wrap', gap: 4 },
   chip:     { padding: '3px 9px', borderRadius: 20, border: '1.5px solid #d5d0c8', background: '#f8f6f2', fontSize: 11, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
   chipOn:   { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
+  toggle:   { display: 'flex', alignItems: 'center', gap: 7, marginTop: 12, fontSize: 12, color: '#444', cursor: 'pointer' },
   intRow:   { display: 'flex', gap: 6 },
   intBtn:   { flex: 1, padding: 8, borderRadius: 8, border: '2px solid #e5e0d8', background: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
   intOn:    { borderColor: '#0d1117', background: '#0d1117', color: 'white' },

@@ -6,7 +6,11 @@ import { useState } from 'react';
 import NewsCard from './NewsCard.jsx';
 import { generatePDF } from '../../utils/pdfUtils.js';
 
-export default function NewsList({ articles, bookmarks, onBookmark, sentiments, lastUpdated, loading, error, onEmail }) {
+export default function NewsList({
+  articles, bookmarks, trending = [], onBookmark, sentiments,
+  reportType = 'daily', onChangeReportType,
+  lastUpdated, loading, error, onEmail,
+}) {
   const [filterKw,   setFilterKw]   = useState('전체');
   const [showBm,     setShowBm]     = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -31,8 +35,19 @@ export default function NewsList({ articles, bookmarks, onBookmark, sentiments, 
             </strong>
             <span style={{ fontSize: 10.5, color: '#aaa' }}>마지막 수집: {lastUpdated}</span>
           </div>
-          <div style={{ display: 'flex', gap: 7 }}>
-            <button style={S.ghostBtn} onClick={() => generatePDF(displayed, { bookmarks, sentiments })}>
+          <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* 일간/주간 토글 */}
+            {onChangeReportType && (
+              <div style={S.reportToggle}>
+                {[['daily', '일간'], ['weekly', '주간']].map(([v, l]) => (
+                  <button key={v}
+                    style={{ ...S.rb, ...(reportType === v ? S.rbOn : {}) }}
+                    onClick={() => onChangeReportType(v)}>{l}</button>
+                ))}
+              </div>
+            )}
+            <button style={S.ghostBtn}
+              onClick={() => generatePDF(displayed, { bookmarks, sentiments, reportType, trending })}>
               🖨️ PDF
             </button>
             <button style={{ ...S.ghostBtn, borderColor: 'rgba(34,197,94,.5)', background: 'rgba(34,197,94,.12)' }}
@@ -40,6 +55,14 @@ export default function NewsList({ articles, bookmarks, onBookmark, sentiments, 
               ✉️ 메일
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 트렌드(급상승) 알림 */}
+      {trending.length > 0 && (
+        <div style={S.trend}>
+          📈 키워드 급상승: {trending.slice(0, 5).map(t =>
+            `${t.keyword} (${t.prev}→${t.curr})`).join(', ')}
         </div>
       )}
 
@@ -124,4 +147,8 @@ const S = {
   center: { textAlign: 'center', padding: '44px 20px', color: '#aaa' },
   spinner: { width: 32, height: 32, border: '3px solid #e5e0d8', borderTopColor: '#0d1117', borderRadius: '50%', animation: 'spin .7s linear infinite', margin: '0 auto 10px' },
   list: { display: 'flex', flexDirection: 'column', gap: 9 },
+  reportToggle: { display: 'flex', gap: 2, background: 'rgba(255,255,255,.1)', borderRadius: 7, padding: 2 },
+  rb:   { padding: '4px 9px', borderRadius: 5, border: 'none', background: 'transparent', color: 'rgba(255,255,255,.7)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  rbOn: { background: 'white', color: '#0d1117' },
+  trend: { background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 8, padding: '8px 12px', fontSize: 12, marginBottom: 10, fontWeight: 600 },
 };

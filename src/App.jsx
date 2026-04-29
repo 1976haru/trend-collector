@@ -23,32 +23,46 @@ export default function App() {
   const [intervalH, setIntervalH] = useState('6');
   const [autoMode, setAutoMode]   = useState(false);
 
-  const { settings, addKeyword, removeKeyword, updateEmailConfig, updateKakaoConfig } = useSettings();
+  const {
+    settings,
+    addKeyword, removeKeyword,
+    addExclude, removeExclude,
+    setFilterAds, setRequireAllInclude, setReportType,
+    updateEmailConfig, updateKakaoConfig,
+  } = useSettings();
 
-  const { articles, history, bookmarks, loading, error, lastUpdated, collect, toggleBookmark } = useNewsCollection();
+  const {
+    articles, history, bookmarks, trending,
+    loading, error, lastUpdated,
+    collect, toggleBookmark,
+  } = useNewsCollection();
+
+  // 현재 설정으로 수집 호출
+  const collectWithSettings = useCallback(() => collect(settings.keywords, {
+    excludeKeywords:    settings.excludeKeywords || [],
+    requireAllInclude:  !!settings.requireAllInclude,
+    filterAds:          settings.filterAds !== false,
+  }), [collect, settings.keywords, settings.excludeKeywords, settings.requireAllInclude, settings.filterAds]);
 
   // 스케줄 트리거 → 수집 자동 실행
   const handleScheduleTrigger = useCallback(async (schedule) => {
-    const arts = await collect(settings.keywords);
+    const arts = await collectWithSettings();
     if (!arts) return;
 
-    // 브라우저 알림
-    if (schedule.channel === 'browser' && Notification.permission === 'granted') {
-      new Notification('Trend Collector v1', {
+    if (schedule.channel === 'browser' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification('Trend Collector', {
         body: `${arts.length}건 수집 완료 (${settings.keywords.join(', ')})`,
       });
     }
-  }, [collect, settings.keywords]);
+  }, [collectWithSettings, settings.keywords]);
 
   const { schedules, countdown, addSchedule, removeSchedule, toggleSchedule } = useScheduler(handleScheduleTrigger);
 
-  // 수동 수집 트리거
   async function handleCollect() {
-    await collect(settings.keywords);
+    await collectWithSettings();
     setTab('news');
   }
 
-  // 자동 모드 토글 (단순 interval 스케줄 추가/제거)
   function handleAutoToggle() {
     if (autoMode) {
       setAutoMode(false);
@@ -58,7 +72,6 @@ export default function App() {
     }
   }
 
-  // 이메일 발송
   function handleEmail() {
     const cfg  = settings.emailConfig || {};
     const to   = (cfg.addresses || []).filter(a => a.includes('@'))[0] || '';
@@ -83,8 +96,15 @@ export default function App() {
         {tab === 'search' && (
           <KeywordManager
             keywords={settings.keywords}
+            excludeKeywords={settings.excludeKeywords || []}
+            filterAds={settings.filterAds !== false}
+            requireAllInclude={!!settings.requireAllInclude}
             onAdd={addKeyword}
             onRemove={removeKeyword}
+            onAddExclude={addExclude}
+            onRemoveExclude={removeExclude}
+            onToggleFilterAds={setFilterAds}
+            onToggleRequireAll={setRequireAllInclude}
             intervalH={intervalH}
             onIntervalChange={setIntervalH}
             onCollect={handleCollect}
@@ -98,6 +118,9 @@ export default function App() {
           <NewsList
             articles={articles}
             bookmarks={bookmarks}
+            trending={trending}
+            reportType={settings.reportType || 'daily'}
+            onChangeReportType={setReportType}
             onBookmark={toggleBookmark}
             sentiments={[]}
             lastUpdated={lastUpdated}
