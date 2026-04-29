@@ -5,7 +5,7 @@
   "description": "내부 직원용 언론보도 자동 수집 + PDF/메일 발송 MVP",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "concurrently -k -n SERVER,CLIENT -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
@@ -16,6 +16,7 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
     "cheerio": "^1.2.0",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
@@ -25,12 +26,11 @@
     "puppeteer": "^24.42.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "sanitize-html": "^2.17.3"
+    "sanitize-html": "^2.17.3",
+    "vite": "^5.4.11"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
     "autocannon": "^8.0.0",
-    "concurrently": "^9.1.0",
-    "vite": "^5.4.11"
+    "concurrently": "^9.1.0"
   }
 }
