@@ -1,52 +1,42 @@
 # 📌 TODO
 
-이번 라운드에서 정리한 작업 / 다음에 할 작업 목록.
+## ✅ MVP 라운드 완료
 
-## ✅ 완료 (이번 라운드)
+- [x] 단일 비밀번호 로그인 (ADMIN_PASSWORD HMAC 쿠키)
+- [x] Express 백엔드 + Vite SPA 단일 서비스로 통합
+- [x] 키워드 / 제외 키워드 / 수신자 — 서버 JSON 파일에 공유 저장
+- [x] 즉시 수집 + 매일 정해진 시각 자동 수집 (node-cron, KST)
+- [x] SMTP 메일 발송 (nodemailer)
+- [x] 최근 리포트 목록 + 새 창 인쇄/PDF 저장 + 메일 재발송
+- [x] Render Blueprint (render.yaml) 추가
+- [x] 카카오톡 / EmailJS / 클라이언트 RSS / 고급 통계 대시보드 제거
+- [x] `data/` 를 `.gitignore` 에, `.env.example` 정비
 
-- [x] 평면적 jsx 파일을 `src/` 구조로 정리 (components / hooks / services / utils / constants)
-- [x] `index.html`, `src/main.jsx`, `vite.config.js` 추가 — `npm run dev`/`build` 동작
-- [x] `.gitignore` 와 `.env.example` 추가, `.env` 커밋 차단
-- [x] `Header.jsx`, `TabBar.jsx` 신규 작성 (App.jsx 가 import 만 하고 파일이 없던 문제 해결)
-- [x] `dateUtils.js`, `filterUtils.js`, `pdfUtils.js` 신규 작성
-- [x] `mediaList.js` 신규 작성 — 중앙/지방/인터넷/지역 분류 헬퍼
-- [x] 포함/제외 키워드 분리 + AND 검색 토글
-- [x] URL + 정규화된 제목 기준 중복 제거
-- [x] 광고/홍보성 기사 자동 필터 (off 가능)
-- [x] 키워드 급상승 감지 (직전 수집과 비교)
-- [x] 보고서 PDF 템플릿: 요약 / 주요 이슈 / 시사점 / 참고 링크
-- [x] 일간 / 주간 보고서 토글
-- [x] `SentimentPanel.jsx` 의 잘못된 `import { fmtDay: fmtDay }` 구문 버그 수정
-- [x] 깨진 README 를 실제 프로젝트 구조 기준으로 다시 작성
-- [x] 저장소 루트의 `files (2).zip` 정리
+## 🔜 우선순위 (P1)
 
-## 🔜 우선순위 백로그
+- [ ] **PDF 파일 첨부 메일** — 현재는 본문 HTML/텍스트만. Puppeteer 또는 Headless Chromium 으로 PDF 바이너리 생성 후 nodemailer 첨부.
+- [ ] **수신자 그룹** — "팀장단 / 실무자 / 전체" 처럼 그룹 단위 발송.
+- [ ] **수동 발송 시 제목 / 머리말 입력** — 현재는 기본 제목 자동 생성.
+- [ ] **본문 LLM 요약** — `OPENAI_API_KEY` 또는 Anthropic 키로 기사 요약.
+- [ ] **로그인 시도 제한** — 같은 IP 가 5회 이상 실패 시 일시 차단 (express-rate-limit).
+- [ ] **보호 헤더** — `helmet` 도입.
 
-### P1 — 보고서 / 발송 안정화
-- [ ] PDF 에 사용자가 정한 보고서 머리말(부서명·작성자) 입력란 추가
-- [ ] 일간 보고서 자동화: 매일 정해진 시각에 PDF 생성 + 메일 작성창 자동 열기
-- [ ] 주간 보고서 (월~일) 집계 — 키워드별 일자별 표
-- [ ] EmailJS 사용 시 첨부파일(PDF) 함께 보내는 옵션 (현재는 본문만)
-- [ ] 다중 수신자(현재 최대 3명)를 그룹(예: "팀장단", "기자단")으로 저장
+## P2 — UX
 
-### P2 — 수집 정확도
-- [ ] 매체별 화이트리스트 / 블랙리스트 (특정 언론사만 / 제외)
-- [ ] 동일 사건 군집화 (제목 유사도 + Levenshtein)
-- [ ] 본문 미리보기(외부 페이지 fetch) — CORS 프록시 한계 고려
-- [ ] 시간대(예: 최근 24시간 / 7일) 필터
-
-### P3 — 분석
-- [ ] Claude API 감성 분석 연동 (백엔드 프록시 경유)
-- [ ] 키워드 워드클라우드
-- [ ] 보도 추세 라인 차트 (history → 시계열)
-
-### P4 — UX / 운영
+- [ ] 리포트 안에서 검색 / 키워드 필터
+- [ ] 리포트 즐겨찾기 (별표) — 별표는 클라이언트 localStorage 로 OK
+- [ ] 일간 / 주간 토글 — 주간 보고서는 최근 7일 리포트를 합친 형태로 다시 렌더
 - [ ] 다크 모드
-- [ ] 모바일 레이아웃 점검
-- [ ] 설정 export / import (.json)
-- [ ] 다국어 (ko / en)
+
+## P3 — 운영
+
+- [ ] **Render Disk 또는 외부 DB(Postgres) 마이그레이션** — Free 플랜에서는 재시작 시 `data/` 가 사라지므로.
+- [ ] 설정 export / import (JSON)
+- [ ] Health 페이지에 마지막 수집 시각 / 다음 cron 시각 노출
+- [ ] 컨테이너 / Cloud Run 배포 옵션
 
 ## 🐞 알려진 이슈
 
-- 브라우저가 닫히면 스케줄이 정지됨 → ROADMAP 의 서버리스 백엔드 항목 참고.
-- `api.allorigins.win` 장애 시 수집이 모두 실패 — 대체 프록시 자동 전환 필요.
+- Google News RSS 가 일시 502 를 반환할 수 있습니다 → `errors` 배열에 키워드별로 기록되며 다른 키워드 수집은 그대로 진행됩니다.
+- 네이버 SMTP 는 PC 웹 메일 설정에서 **POP3/SMTP 사용** 을 켜야 발송됩니다.
+- Render free 플랜은 15분 idle 시 sleep → 매일 09:00 cron 이 동작하려면 Starter 이상 권장.

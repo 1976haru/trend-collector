@@ -1,161 +1,107 @@
 // ─────────────────────────────────────────────
-// App.jsx — 앱 루트 (탭 라우팅 + 훅 연결)
+// App.jsx — 인증 게이트 + 4개 탭 (키워드 / 리포트 / 수신자 / 스케줄)
 // ─────────────────────────────────────────────
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import Header        from './components/layout/Header.jsx';
 import TabBar        from './components/layout/TabBar.jsx';
+import Login         from './components/auth/Login.jsx';
 import KeywordManager   from './components/keyword/KeywordManager.jsx';
-import NewsList         from './components/news/NewsList.jsx';
-import MediaCoverage    from './components/media/MediaCoverage.jsx';
-import SentimentPanel   from './components/analysis/SentimentPanel.jsx';
-import ScheduleSettings from './components/schedule/ScheduleSettings.jsx';
-import NotificationSettings from './components/notification/NotificationSettings.jsx';
+import RecentReports    from './components/reports/RecentReports.jsx';
+import RecipientSettings from './components/recipients/RecipientSettings.jsx';
+import ScheduleSettings  from './components/schedule/ScheduleSettings.jsx';
 
-import { useNewsCollection } from './hooks/useNewsCollection.js';
-import { useScheduler }      from './hooks/useScheduler.js';
-import { useSettings }       from './hooks/useSettings.js';
-import { openGmailLink, openNaverMailLink, openMailtoLink } from './services/emailService.js';
-import { formatFull } from './utils/dateUtils.js';
+import { useAuth }    from './hooks/useAuth.js';
+import { useConfig }  from './hooks/useConfig.js';
+import { useReports } from './hooks/useReports.js';
+import * as api from './services/api.js';
 
 export default function App() {
-  const [tab, setTab]       = useState('search');
-  const [intervalH, setIntervalH] = useState('6');
-  const [autoMode, setAutoMode]   = useState(false);
+  const auth   = useAuth();
+  const cfg    = useConfig({ enabled: auth.authed === true });
+  const rep    = useReports({ enabled: auth.authed === true });
+  const [tab,    setTab]    = useState('keywords');
+  const [health, setHealth] = useState(null);
 
-  const {
-    settings,
-    addKeyword, removeKeyword,
-    addExclude, removeExclude,
-    setFilterAds, setRequireAllInclude, setReportType,
-    updateEmailConfig, updateKakaoConfig,
-  } = useSettings();
+  // 로그인 후 헬스 한번 조회 (스케줄 / SMTP 상태 표시용)
+  useEffect(() => {
+    if (auth.authed === true) api.health().then(setHealth).catch(() => setHealth(null));
+  }, [auth.authed]);
 
-  const {
-    articles, history, bookmarks, trending,
-    loading, error, lastUpdated,
-    collect, toggleBookmark,
-  } = useNewsCollection();
-
-  // 현재 설정으로 수집 호출
-  const collectWithSettings = useCallback(() => collect(settings.keywords, {
-    excludeKeywords:    settings.excludeKeywords || [],
-    requireAllInclude:  !!settings.requireAllInclude,
-    filterAds:          settings.filterAds !== false,
-  }), [collect, settings.keywords, settings.excludeKeywords, settings.requireAllInclude, settings.filterAds]);
-
-  // 스케줄 트리거 → 수집 자동 실행
-  const handleScheduleTrigger = useCallback(async (schedule) => {
-    const arts = await collectWithSettings();
-    if (!arts) return;
-
-    if (schedule.channel === 'browser' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      new Notification('Trend Collector', {
-        body: `${arts.length}건 수집 완료 (${settings.keywords.join(', ')})`,
-      });
-    }
-  }, [collectWithSettings, settings.keywords]);
-
-  const { schedules, countdown, addSchedule, removeSchedule, toggleSchedule } = useScheduler(handleScheduleTrigger);
-
-  async function handleCollect() {
-    await collectWithSettings();
-    setTab('news');
+  // 인증 상태 확인 중
+  if (auth.authed === null) {
+    return <div style={S.splash}>⏳ 확인 중...</div>;
   }
 
-  function handleAutoToggle() {
-    if (autoMode) {
-      setAutoMode(false);
-    } else {
-      setAutoMode(true);
-      handleCollect();
-    }
+  // 미인증 → 로그인 화면
+  if (!auth.authed) {
+    return (
+      <Login
+        onSubmit={auth.signIn}
+        loading={auth.loading}
+        error={auth.error}
+      />
+    );
   }
-
-  function handleEmail() {
-    const cfg  = settings.emailConfig || {};
-    const to   = (cfg.addresses || []).filter(a => a.includes('@'))[0] || '';
-    const date = lastUpdated || formatFull();
-    if (cfg.provider === 'gmail')       openGmailLink({ toEmail: to, articles, reportDate: date });
-    else if (cfg.provider === 'naver')  openNaverMailLink({ toEmail: to, articles, reportDate: date });
-    else                                openMailtoLink({ toEmail: to, articles, reportDate: date });
-  }
-
-  const tabCounts = {
-    news:    articles.length || undefined,
-    sources: undefined,
-  };
 
   return (
     <div style={S.app}>
-      <Header isLive={autoMode} countdown={countdown} />
+      <Header isLive={!!health} countdown={health ? `매일 ${health.reportTime}` : ''} />
 
       <main style={S.main}>
-        <TabBar active={tab} onChange={setTab} counts={tabCounts} />
+        <TabBar
+          active={tab}
+          onChange={setTab}
+          counts={{ reports: rep.reports.length || undefined }}
+          onLogout={auth.signOut}
+        />
 
-        {tab === 'search' && (
+        {(cfg.error || rep.error) && (
+          <div style={S.banner}>⚠️ {cfg.error || rep.error}</div>
+        )}
+
+        {tab === 'keywords' && (
           <KeywordManager
-            keywords={settings.keywords}
-            excludeKeywords={settings.excludeKeywords || []}
-            filterAds={settings.filterAds !== false}
-            requireAllInclude={!!settings.requireAllInclude}
-            onAdd={addKeyword}
-            onRemove={removeKeyword}
-            onAddExclude={addExclude}
-            onRemoveExclude={removeExclude}
-            onToggleFilterAds={setFilterAds}
-            onToggleRequireAll={setRequireAllInclude}
-            intervalH={intervalH}
-            onIntervalChange={setIntervalH}
-            onCollect={handleCollect}
-            onAutoToggle={handleAutoToggle}
-            autoMode={autoMode}
-            loading={loading}
+            keywords={cfg.config.keywords}
+            excludeKeywords={cfg.config.excludes}
+            filterAds={cfg.config.filterAds}
+            requireAllInclude={cfg.config.requireAllInclude}
+            onAdd={cfg.addKeyword}
+            onRemove={cfg.removeKeyword}
+            onAddExclude={cfg.addExclude}
+            onRemoveExclude={cfg.removeExclude}
+            onToggleFilterAds={cfg.setFilterAds}
+            onToggleRequireAll={cfg.setRequireAll}
+            loading={cfg.loading || rep.loading}
+            onCollect={async () => { await rep.collect(); setTab('reports'); }}
           />
         )}
 
-        {tab === 'news' && (
-          <NewsList
-            articles={articles}
-            bookmarks={bookmarks}
-            trending={trending}
-            reportType={settings.reportType || 'daily'}
-            onChangeReportType={setReportType}
-            onBookmark={toggleBookmark}
-            sentiments={[]}
-            lastUpdated={lastUpdated}
-            loading={loading}
-            error={error}
-            onEmail={handleEmail}
+        {tab === 'reports' && (
+          <RecentReports
+            reports={rep.reports}
+            loading={rep.loading}
+            onRefresh={rep.refresh}
+            onCollect={rep.collect}
+            onEmail={async (id) => {
+              try {
+                const r = await rep.sendEmail(id);
+                alert(`✅ 메일 발송 완료 — ${r.sentTo.length}명`);
+              } catch (e) { alert(`❌ ${e.message}`); }
+            }}
           />
         )}
 
-        {tab === 'sources' && (
-          <MediaCoverage articles={articles} />
-        )}
-
-        {tab === 'analysis' && (
-          <SentimentPanel articles={articles} sentiments={[]} history={history} />
+        {tab === 'mail' && (
+          <RecipientSettings
+            recipients={cfg.config.recipients}
+            onAdd={cfg.addRecipient}
+            onRemove={cfg.removeRecipient}
+          />
         )}
 
         {tab === 'schedule' && (
-          <ScheduleSettings
-            schedules={schedules}
-            onAdd={addSchedule}
-            onRemove={removeSchedule}
-            onToggle={toggleSchedule}
-            countdown={countdown}
-          />
-        )}
-
-        {tab === 'notify' && (
-          <NotificationSettings
-            settings={settings}
-            onUpdateEmail={updateEmailConfig}
-            onUpdateKakao={updateKakaoConfig}
-            articles={articles}
-            lastUpdated={lastUpdated}
-          />
+          <ScheduleSettings health={health} />
         )}
       </main>
     </div>
@@ -163,6 +109,9 @@ export default function App() {
 }
 
 const S = {
-  app:  { minHeight: '100vh', background: '#f0ede8', fontFamily: "'IBM Plex Sans KR','Apple SD Gothic Neo',sans-serif" },
-  main: { maxWidth: 860, margin: '0 auto', padding: '14px 12px' },
+  app:    { minHeight: '100vh', background: '#f0ede8', fontFamily: "'IBM Plex Sans KR','Apple SD Gothic Neo',sans-serif" },
+  main:   { maxWidth: 860, margin: '0 auto', padding: '14px 12px' },
+  splash: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888', fontSize: 14 },
+  banner: { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030',
+            padding: '8px 12px', borderRadius: 8, fontSize: 12, marginBottom: 10 },
 };

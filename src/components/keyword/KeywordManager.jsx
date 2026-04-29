@@ -1,46 +1,34 @@
 // ─────────────────────────────────────────────
-// KeywordManager.jsx — 키워드 추가·삭제·프리셋 + 제외 + 옵션
+// KeywordManager.jsx — 키워드 / 제외 키워드 / 옵션 + 즉시 수집
 // ─────────────────────────────────────────────
 
 import { useState } from 'react';
 import { PRESET_KEYWORDS } from '../../constants/config.js';
 
 export default function KeywordManager({
-  keywords, excludeKeywords = [], filterAds = true, requireAllInclude = false,
+  keywords = [], excludeKeywords = [], filterAds = true, requireAllInclude = false,
   onAdd, onRemove, onAddExclude, onRemoveExclude,
   onToggleFilterAds, onToggleRequireAll,
-  intervalH, onIntervalChange, onCollect, onAutoToggle, autoMode, loading,
+  onCollect, loading = false,
 }) {
   const [input,    setInput]    = useState('');
   const [excInput, setExcInput] = useState('');
 
-  function handleAdd() {
-    const k = input.trim();
-    if (k) { onAdd(k); setInput(''); }
-  }
-
-  function handleAddExclude() {
-    const k = excInput.trim();
-    if (k && onAddExclude) { onAddExclude(k); setExcInput(''); }
-  }
+  function addKw()      { const k = input.trim();    if (k) { onAdd(k); setInput(''); } }
+  function addExclude() { const k = excInput.trim(); if (k && onAddExclude) { onAddExclude(k); setExcInput(''); } }
 
   return (
     <div>
-      {/* 키워드 입력 */}
+      {/* 포함 키워드 */}
       <div style={S.panel}>
         <div style={S.label}>🏷 검색(포함) 키워드</div>
         <div style={S.row}>
-          <input
-            style={S.inp}
-            placeholder="키워드 입력 후 Enter"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAdd()}
-          />
-          <button style={S.btnDark} onClick={handleAdd}>추가</button>
+          <input style={S.inp} placeholder="키워드 입력 후 Enter"
+            value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addKw()} />
+          <button style={S.btnDark} onClick={addKw}>추가</button>
         </div>
 
-        {/* 현재 키워드 태그 */}
         {keywords.length > 0 && (
           <div style={S.tagWrap}>
             {keywords.map(k => (
@@ -52,24 +40,20 @@ export default function KeywordManager({
           </div>
         )}
 
-        {/* 빠른 추가 프리셋 */}
         <div style={S.label2}>📌 빠른 추가</div>
         <div style={S.presetWrap}>
           {PRESET_KEYWORDS.map(k => (
-            <button
-              key={k}
+            <button key={k}
               style={{ ...S.chip, ...(keywords.includes(k) ? S.chipOn : {}) }}
-              onClick={() => keywords.includes(k) ? onRemove(k) : onAdd(k)}
-            >
+              onClick={() => keywords.includes(k) ? onRemove(k) : onAdd(k)}>
               {keywords.includes(k) ? '✓ ' : ''}{k}
             </button>
           ))}
         </div>
 
-        {/* AND 모드 토글 */}
         {onToggleRequireAll && (
           <label style={S.toggle}>
-            <input type="checkbox" checked={requireAllInclude}
+            <input type="checkbox" checked={!!requireAllInclude}
               onChange={e => onToggleRequireAll(e.target.checked)} />
             <span>모든 키워드를 포함하는 기사만 (AND 검색)</span>
           </label>
@@ -80,14 +64,10 @@ export default function KeywordManager({
       <div style={S.panel}>
         <div style={S.label}>🚫 제외 키워드</div>
         <div style={S.row}>
-          <input
-            style={S.inp}
-            placeholder="제외할 키워드 입력 후 Enter (예: 광고, 부고)"
-            value={excInput}
-            onChange={e => setExcInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAddExclude()}
-          />
-          <button style={S.btnDark} onClick={handleAddExclude}>추가</button>
+          <input style={S.inp} placeholder="제외할 키워드 입력 후 Enter (예: 광고, 부고)"
+            value={excInput} onChange={e => setExcInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addExclude()} />
+          <button style={S.btnDark} onClick={addExclude}>추가</button>
         </div>
         {excludeKeywords.length > 0 && (
           <div style={S.tagWrap}>
@@ -99,41 +79,26 @@ export default function KeywordManager({
             ))}
           </div>
         )}
-
         {onToggleFilterAds && (
           <label style={S.toggle}>
-            <input type="checkbox" checked={filterAds}
+            <input type="checkbox" checked={!!filterAds}
               onChange={e => onToggleFilterAds(e.target.checked)} />
             <span>광고/홍보성 기사 자동 필터링</span>
           </label>
         )}
       </div>
 
-      {/* 수집 주기 */}
-      <div style={S.panel}>
-        <div style={S.label}>⏱ 수집 주기 (간격)</div>
-        <div style={S.intRow}>
-          {['1','3','6','12','24'].map(h => (
-            <button
-              key={h}
-              style={{ ...S.intBtn, ...(intervalH === h ? S.intOn : {}) }}
-              onClick={() => onIntervalChange(h)}
-            >{h}시간</button>
-          ))}
-        </div>
-      </div>
-
-      {/* 실행 버튼 */}
+      {/* 즉시 수집 */}
       <div style={S.actRow}>
-        <button style={{ ...S.btnDark, flex: 2, padding: 13, fontSize: 13 }}
-          onClick={onCollect} disabled={loading}>
-          {loading ? '⏳ 수집 중...' : '🔍 지금 즉시 수집'}
+        <button style={{ ...S.btnDark, flex: 1, padding: 13, fontSize: 13 }}
+          onClick={onCollect} disabled={loading || keywords.length === 0}>
+          {loading ? '⏳ 수집 중...'
+                   : keywords.length === 0 ? '키워드를 먼저 추가하세요'
+                                           : '🔍 지금 즉시 수집'}
         </button>
-        <button
-          style={{ ...S.btnDark, flex: 1, padding: 13, fontSize: 13, background: autoMode ? '#ef4444' : '#22c55e' }}
-          onClick={onAutoToggle} disabled={loading}>
-          {autoMode ? '⏹ 중지' : `▶ ${intervalH}h 자동`}
-        </button>
+      </div>
+      <div style={S.tip}>
+        💡 자동 수집은 서버에서 매일 정해진 시각에 실행됩니다 (스케줄 탭 참고).
       </div>
     </div>
   );
@@ -152,9 +117,7 @@ const S = {
   chip:     { padding: '3px 9px', borderRadius: 20, border: '1.5px solid #d5d0c8', background: '#f8f6f2', fontSize: 11, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
   chipOn:   { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
   toggle:   { display: 'flex', alignItems: 'center', gap: 7, marginTop: 12, fontSize: 12, color: '#444', cursor: 'pointer' },
-  intRow:   { display: 'flex', gap: 6 },
-  intBtn:   { flex: 1, padding: 8, borderRadius: 8, border: '2px solid #e5e0d8', background: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
-  intOn:    { borderColor: '#0d1117', background: '#0d1117', color: 'white' },
-  actRow:   { display: 'flex', gap: 7 },
+  actRow:   { display: 'flex', gap: 7, marginTop: 4 },
   btnDark:  { padding: '8px 13px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 600, cursor: 'pointer', background: '#0d1117', color: 'white', fontFamily: 'inherit' },
+  tip:      { background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: 10, fontSize: 11.5, color: '#92400e', lineHeight: 1.6, marginTop: 8 },
 };

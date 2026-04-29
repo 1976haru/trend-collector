@@ -1,17 +1,15 @@
 // ─────────────────────────────────────────────
-// TabBar.jsx — 메인 탭 라우팅
+// TabBar.jsx — 메인 탭 (MVP 5개)
 // ─────────────────────────────────────────────
 
 const TABS = [
-  { id: 'search',   label: '키워드',  icon: '🏷' },
-  { id: 'news',     label: '뉴스',    icon: '📰' },
-  { id: 'sources',  label: '언론사',  icon: '📡' },
-  { id: 'analysis', label: '분석',    icon: '📊' },
+  { id: 'keywords', label: '키워드',  icon: '🏷' },
+  { id: 'reports',  label: '리포트',  icon: '📰' },
+  { id: 'mail',     label: '수신자',  icon: '📧' },
   { id: 'schedule', label: '스케줄',  icon: '⏰' },
-  { id: 'notify',   label: '알림',    icon: '🔔' },
 ];
 
-export default function TabBar({ active, onChange, counts = {} }) {
+export default function TabBar({ active, onChange, counts = {}, onLogout }) {
   return (
     <nav style={S.bar}>
       {TABS.map(t => {
@@ -31,6 +29,12 @@ export default function TabBar({ active, onChange, counts = {} }) {
           </button>
         );
       })}
+      {onLogout && (
+        <button onClick={onLogout} style={{ ...S.btn, color: '#ef4444' }} title="로그아웃">
+          <span style={S.icon}>🚪</span>
+          <span style={S.lbl}>로그아웃</span>
+        </button>
+      )}
     </nav>
   );
 }

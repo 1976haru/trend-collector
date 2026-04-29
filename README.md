@@ -1,39 +1,43 @@
-# 📰 Trend Collector
+# 📰 Trend Collector — 내부 직원용 MVP
 
-> **전국 언론보도 자동 수집 + 요약 + PDF·메일 발송 시스템**
-> 키워드 기반으로 Google News RSS 를 자동 수집하고, 일일 업무보고용 PDF · 이메일 · 카카오톡 알림으로 배포합니다.
+> 키워드 기반 전국 언론보도를 매일 자동 수집해 PDF · 메일로 배포하는 **내부 직원용** 도구.
+> 단일 비밀번호 로그인 (회원가입 없음) · 외부 공개 X · Render 한 곳에 배포.
 
 ---
 
-## ✨ 주요 기능
+## ✨ MVP 핵심 기능
 
-| 분류 | 기능 |
-|------|------|
-| 수집 | Google News RSS · 포함/제외 키워드 · AND 검색 · URL+제목 중복 제거 · 광고/홍보 자동 필터 |
-| 분석 | 키워드 급상승 감지 · 매체 등급(중앙/지방/인터넷) · 지역 분류 · 감성 분석 슬롯 |
-| 보고 | "요약 / 주요 이슈 / 시사점 / 참고 링크" 형식의 PDF 보고서 (일간·주간) |
-| 발송 | Gmail · 네이버 · 다음 메일 작성창 자동 열기 · EmailJS · 카카오톡 공유 · 브라우저 알림 |
-| 자동화 | 매일 특정 시각 / N시간 간격 스케줄러 · 다중 키워드 · 다중 수신자 |
+- 🔐 **단일 비밀번호 로그인** (`ADMIN_PASSWORD` 환경변수, 7일 세션 쿠키)
+- 🏷 **키워드 / 제외 키워드** 등록 — 모든 직원이 같은 설정 공유
+- 📧 **메일 수신자** 등록 — 모든 직원이 같은 목록 공유
+- 🔍 **즉시 수집** 버튼 또는 매일 정해진 시각 (REPORT_TIME) **자동 수집**
+- 📰 **리포트 목록** — 최근 50개 언제든 다시 열기 / 메일 재발송
+- 📄 **PDF 리포트** — 새 창에서 인쇄 다이얼로그 → "PDF 로 저장" (한글 안전)
+- ✉️ **SMTP 메일 발송** — Gmail / 네이버 / 회사 SMTP 모두 지원
 
 ---
 
 ## 🛠 기술 스택
 
-- **Frontend**: React 18 + Vite 5
-- **차트**: Recharts
-- **메일**: `mailto:` / Gmail / Naver / EmailJS (월 200건 무료)
-- **스토리지**: 브라우저 `localStorage` (사용자별 키워드/수신자/스케줄 저장)
-- **호스팅**: GitHub Pages (Actions 기반 자동 배포 — `.github/workflows/deploy.yml`)
+| | |
+|------|------|
+| 프론트엔드 | React 18 + Vite 5 |
+| 백엔드 | Express + cookie-parser + node-cron + nodemailer |
+| 인증 | HMAC 서명 쿠키 (httpOnly, sameSite=lax) |
+| 저장소 | 서버 로컬 JSON 파일 (`data/config.json`, `data/reports/*.json`) |
+| 배포 | Render Web Service (Singapore 권역, free 또는 starter 플랜) |
 
 ---
 
-## 🚀 빠른 시작
+## 🚀 로컬 실행
 
-### 1. 저장소 받기
+### 1. 저장소 받기 + 환경변수 설정
 
 ```bash
 git clone https://github.com/1976haru/trend-collector.git
 cd trend-collector
+cp .env.example .env
+# .env 를 열어 ADMIN_PASSWORD / SMTP_* 값을 채워 넣으세요.
 ```
 
 ### 2. 의존성 설치
@@ -42,116 +46,134 @@ cd trend-collector
 npm install
 ```
 
-### 3. 환경변수 (선택)
-
-```bash
-cp .env.example .env
-# 필요한 키만 채워 넣으세요. EmailJS / Kakao 키가 없어도 mailto / Gmail / Naver 모드는 동작합니다.
-```
-
-### 4. 개발 서버 실행
+### 3. 개발 서버 (백엔드 + 프론트 동시 실행)
 
 ```bash
 npm run dev
-# http://localhost:5173 으로 접속
+# → 백엔드: http://localhost:3000
+# → 프론트: http://localhost:5173  (자동 열림, /api 는 :3000 으로 프록시)
 ```
 
-### 5. 운영 빌드 / 미리보기
+### 4. 운영 모드로 단일 실행 (Render 와 동일한 환경)
 
 ```bash
-npm run build       # dist/ 생성
-npm run preview     # http://localhost:4173 에서 빌드 결과 확인
+npm run build         # SPA 빌드 (dist/ 생성)
+npm start             # Express 가 dist 정적 서빙 + API + cron
+# → 한 포트(:3000)에서 모두 서빙: http://localhost:3000
 ```
 
 ---
 
-## 📁 폴더 구조
+## ☁️ Render 배포 방법
+
+저장소에 `render.yaml` 이 포함되어 있어 Blueprint 한 번 클릭으로 배포됩니다.
+
+### 절차
+
+1. Render 대시보드 → **New > Blueprint** → 본 저장소 선택.
+2. `render.yaml` 의 `sync: false` 변수를 입력하라는 프롬프트가 뜸.
+   - `ADMIN_PASSWORD`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `BASE_URL` 등
+3. **Apply** → 약 3 ~ 5분 후 배포 완료.
+4. 발급된 도메인(예: `https://trend-collector.onrender.com`)에 접속.
+
+### Blueprint 를 쓰지 않고 수동으로 만들 때
+
+- **Type**: Web Service
+- **Runtime**: Node
+- **Build Command**: `npm install && npm run build`
+- **Start Command**: `npm start`
+- **Health Check Path**: `/api/health`
+- **Environment**: 아래 환경변수 입력 (값은 Render UI 에 직접)
+
+### 데이터 영구 보존
+
+Render free 플랜은 디스크가 휘발성이라 재시작 시 `data/` 가 초기화됩니다.
+리포트 / 설정을 영구 보존하려면 `render.yaml` 의 `disk:` 블록 주석을 해제하고 (Starter 이상),
+`DATA_DIR=/var/data` 를 함께 설정하세요.
+
+---
+
+## 🔧 필요한 환경변수
+
+| 변수 | 필수 | 설명 |
+|------|:-:|------|
+| `ADMIN_PASSWORD` | ✅ | 직원 공용 로그인 비밀번호 (변경 시 기존 세션 자동 무효화) |
+| `SMTP_HOST` | ⭐ | 메일 발송 서버 (예: `smtp.naver.com`, `smtp.gmail.com`) |
+| `SMTP_PORT` | ⭐ | 587 (STARTTLS) 또는 465 (SSL) |
+| `SMTP_USER` | ⭐ | SMTP 로그인 ID |
+| `SMTP_PASS` | ⭐ | SMTP 비밀번호 또는 앱 비밀번호 |
+| `SMTP_FROM` | ⭐ | 발신자 표시 (예: `"Trend Collector <id@naver.com>"`) |
+| `REPORT_TIME` | | 일일 자동 수집 시각 `HH:MM` (KST). 기본 `09:00` |
+| `BASE_URL` | | 메일 본문 링크용 절대 URL (예: `https://trend-collector.onrender.com`) |
+| `OPENAI_API_KEY` | | (예약) 추후 본문 자동 요약 기능에서 사용 |
+| `DATA_DIR` | | JSON 저장 경로. 기본 `./data` |
+| `PORT` | | Render 가 자동 주입. 로컬은 3000 |
+
+⭐ : SMTP 변수 하나라도 빠지면 메일 발송은 비활성화되지만 **수집·리포트 저장 자체는 정상 동작**합니다.
+
+---
+
+## 👤 내부 직원 접속 방법
+
+1. 운영자가 알려준 URL 로 접속:
+   ```
+   https://trend-collector.onrender.com
+   ```
+2. 로그인 화면에서 **공용 비밀번호** 입력 → 들어가기.
+3. 4개 탭으로 작업:
+   - **키워드** — 키워드 / 제외 키워드 등록 + "지금 즉시 수집"
+   - **리포트** — 최근 생성된 보고서 목록 / PDF 보기 / 메일 재발송
+   - **수신자** — 일일 메일을 받을 이메일 주소 등록
+   - **스케줄** — 자동 수집 시각 확인 (변경은 운영자만)
+
+> 하나의 비밀번호를 모든 직원이 공유합니다. 비밀번호를 바꾸면 모든 사람이 다시 로그인해야 합니다.
+
+---
+
+## 🔐 보안 메모
+
+- `.env` 는 `.gitignore` 에 포함 — **절대 GitHub 에 올리지 마세요.**
+- `ADMIN_PASSWORD`, SMTP 비밀번호, API Key 는 **반드시 Render 환경변수**로만 관리.
+- 세션 쿠키는 `httpOnly` + `sameSite=lax` + 운영시 `secure=true`.
+- 외부 공개를 원치 않으면 Render Web Service 의 **Custom Domain** 단계에서 IP 제한 / Cloudflare Access 를 추가하는 것을 권장합니다.
+
+---
+
+## 📁 폴더 구조 (요약)
 
 ```
 trend-collector/
-├── index.html
-├── vite.config.js
-├── package.json
+├── render.yaml                  # Render Blueprint
+├── package.json                 # express + nodemailer + node-cron + react/vite
+├── vite.config.js               # /api 를 :3000 Express 로 프록시
 ├── .env.example
-├── .gitignore
-├── README.md / TODO.md / ROADMAP.md
-├── .github/workflows/deploy.yml         # GitHub Pages 자동 배포
-└── src/
-    ├── main.jsx                          # 진입점
-    ├── App.jsx                           # 탭 라우팅 + 훅 연결
-    ├── constants/
-    │   ├── config.js                     # 환경변수 / 상수 / 프리셋
-    │   └── mediaList.js                  # 전국 언론사 카테고리 + 매체 등급/지역 분류
-    ├── services/
-    │   ├── rssService.js                 # Google News RSS 수집
-    │   ├── emailService.js               # Gmail/Naver/Daum 메일 작성창 + EmailJS
-    │   ├── kakaoService.js               # 카카오톡 공유 / 나에게 보내기
-    │   └── storageService.js             # localStorage 래퍼
-    ├── hooks/
-    │   ├── useNewsCollection.js          # 수집 + 중복 제거 + 광고 필터 + 트렌드 감지
-    │   ├── useScheduler.js               # 매일/N시간 간격 스케줄러
-    │   └── useSettings.js                # 키워드·수신자·옵션 저장
+├── server/                      # 백엔드 (Express)
+│   ├── index.js                 # 진입점 + 라우터 + SPA 정적 서빙
+│   ├── auth.js                  # ADMIN_PASSWORD HMAC 쿠키 인증
+│   ├── store.js                 # JSON 파일 저장 (config + reports)
+│   ├── collector.js             # Google News RSS 직접 수집 + 필터
+│   ├── mailer.js                # nodemailer SMTP
+│   ├── scheduler.js             # node-cron (REPORT_TIME)
+│   └── reportTemplate.js        # 보고서 HTML / 메일 본문 렌더러
+└── src/                         # 프론트 (React)
+    ├── main.jsx, App.jsx
     ├── components/
-    │   ├── layout/Header.jsx, TabBar.jsx
-    │   ├── keyword/KeywordManager.jsx    # 포함/제외 키워드 + 광고 필터 + AND 토글
-    │   ├── news/NewsCard.jsx, NewsList.jsx
-    │   ├── media/MediaCoverage.jsx
-    │   ├── analysis/SentimentPanel.jsx
+    │   ├── auth/Login.jsx
+    │   ├── keyword/KeywordManager.jsx
+    │   ├── recipients/RecipientSettings.jsx
+    │   ├── reports/RecentReports.jsx
     │   ├── schedule/ScheduleSettings.jsx
-    │   └── notification/NotificationSettings.jsx
-    └── utils/
-        ├── dateUtils.js
-        ├── filterUtils.js                # 포함/제외 + 중복 제거 + 트렌드 감지
-        └── pdfUtils.js                   # 일일 업무보고 PDF 템플릿
+    │   └── layout/{Header,TabBar}.jsx
+    ├── hooks/{useAuth, useConfig, useReports}.js
+    ├── services/api.js
+    └── constants/config.js      # PRESET_KEYWORDS 만
 ```
-
----
-
-## 🔐 비밀정보 / 환경변수 정책
-
-- **`.env` 는 `.gitignore` 에 포함되어 있어 절대 커밋되지 않습니다.**
-- 클라이언트(브라우저)에서 사용하는 변수는 반드시 `VITE_` 접두어가 필요합니다.
-- 키 값이 클라이언트에 노출되어도 안전한 항목만 `VITE_*` 로 두세요.
-  - 안전: EmailJS *공개키*, Kakao JavaScript 앱 키
-  - **위험**: Anthropic / OpenAI 시크릿 키 — 운영 시 별도 백엔드 프록시를 통해 호출하세요.
-
----
-
-## ⏰ 스케줄 (브라우저 기반)
-
-| 방식 | 설명 |
-|------|------|
-| 매일 특정 시각 | 예: 매일 09:00, 매일 18:00 |
-| N시간 간격 | 예: 6시간마다 자동 수집 |
-
-> ⚠️ 브라우저 탭이 열려 있는 동안만 실행됩니다. 24/7 자동 수집이 필요하면 ROADMAP 의 "서버리스 백엔드" 항목을 참고하세요.
-
----
-
-## 📦 GitHub Pages 배포
-
-`main` 브랜치에 push 하면 `.github/workflows/deploy.yml` 이 자동으로 빌드하고 GitHub Pages 에 배포합니다.
-
-1. GitHub 저장소 → **Settings → Pages** → Source: **GitHub Actions**
-2. `main` 으로 push → 약 2분 후 `https://<USER>.github.io/trend-collector/` 접속 가능
-
-저장소 이름이 `trend-collector` 가 아니라면 `vite.config.js` 의 `base` 또는 `.env` 의 `VITE_BASE_PATH` 를 맞춰주세요.
-
----
-
-## 🔧 자주 묻는 문제
-
-- **CORS 오류로 RSS 가 안 받아져요** — 기본 프록시 `api.allorigins.win` 가 일시 장애일 수 있습니다. `.env` 의 `VITE_RSS_PROXY` 를 다른 프록시로 교체해 보세요.
-- **PDF 저장 시 한글이 깨져요** — 본 프로젝트의 PDF 는 "프린트 친화적 새 창 → 사용자가 PDF 로 저장" 방식이라 OS 기본 한글 글꼴이 그대로 사용됩니다. 브라우저 인쇄 다이얼로그에서 *PDF 로 저장* 을 선택하세요.
-- **EmailJS 가 동작하지 않아요** — `notify` 탭에서 Gmail / Naver / 다음 / 기본앱 을 고르면 EmailJS 없이도 메일 작성창이 자동으로 열립니다.
 
 ---
 
 ## 📌 다음 작업
 
-- [TODO.md](./TODO.md) — 우선순위 백로그
-- [ROADMAP.md](./ROADMAP.md) — 공무원 / 업무용 기능 로드맵
-
----
+- [TODO.md](./TODO.md) — 우선순위 백로그 (PDF 첨부 발송, 검색 / 필터 UI 등)
+- [ROADMAP.md](./ROADMAP.md) — 공무원·정책 분야 확장 로드맵
 
 Trend Collector | MIT License
