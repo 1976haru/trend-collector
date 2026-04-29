@@ -11,7 +11,7 @@ export default function KeywordManager({
   onAdd, onRemove, onAddExclude, onRemoveExclude,
   onToggleFilterAds, onToggleRequireAll,
   onCollect, loading = false,
-  config, health, onUpdateConfig,
+  config, health, onUpdateConfig, onClearKeywords,
 }) {
   const [input,    setInput]    = useState('');
   const [excInput, setExcInput] = useState('');
@@ -36,14 +36,24 @@ export default function KeywordManager({
         </div>
 
         {keywords.length > 0 && (
-          <div style={S.tagWrap}>
-            {keywords.map(k => (
-              <span key={k} style={S.tag}>
-                {k}
-                <button style={S.rm} onClick={() => onRemove(k)}>×</button>
-              </span>
-            ))}
-          </div>
+          <>
+            <div style={S.tagWrap}>
+              {keywords.map(k => (
+                <span key={k} style={S.tag}>
+                  {k}
+                  <button style={S.rm} onClick={() => onRemove(k)}>×</button>
+                </span>
+              ))}
+            </div>
+            {onClearKeywords && (
+              <button style={S.clearBtn}
+                onClick={() => {
+                  if (confirm(`선택된 키워드 ${keywords.length}개를 모두 비우시겠습니까?`)) onClearKeywords();
+                }}>
+                🗑 키워드 전체 초기화
+              </button>
+            )}
+          </>
         )}
 
         {/* 법무부 빠른 키워드 — 카테고리 접기/펼치기 */}
@@ -121,6 +131,11 @@ export default function KeywordManager({
               </button>
             ))}
           </div>
+          {period === '24h' && (
+            <div style={S.warnBox}>
+              ⚠️ 결과가 적을 수 있습니다. 최근 7일 또는 30일을 권장합니다.
+            </div>
+          )}
           {period === 'custom' && (
             <div style={S.dateRow}>
               <label style={S.dateLabel}>시작
@@ -242,6 +257,9 @@ const S = {
   tagWrap:  { display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 },
   tag:      { display: 'flex', alignItems: 'center', gap: 4, background: '#0d1117', color: 'white', borderRadius: 20, padding: '4px 11px', fontSize: 12.5 },
   rm:       { background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, padding: 0, minWidth: 18, minHeight: 18 },
+  clearBtn: { padding: '6px 11px', minHeight: 30, borderRadius: 6, border: '1.5px solid #fecaca',
+              background: '#fff5f5', color: '#991b1b', fontSize: 11.5, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit', marginBottom: 10 },
 
   catBox:   { borderRadius: 8, border: '1px solid #f0ede8', marginBottom: 6, overflow: 'hidden', background: '#fafaf8' },
   catHead:  { width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -268,6 +286,8 @@ const S = {
               boxShadow: '0 4px 10px rgba(13,17,23,.18)', marginBottom: 12 },
 
   warn:     { color: '#c53030', fontSize: 11, marginLeft: 4 },
+  warnBox:  { background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
+              padding: '8px 11px', borderRadius: 7, fontSize: 12, marginTop: 8 },
   errBox:   { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030',
               padding: '8px 11px', borderRadius: 7, fontSize: 12, marginTop: 8 },
 

@@ -13,7 +13,7 @@ const REPORTS_DIR = path.join(DATA_DIR, 'reports');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  keywords:           ['보호관찰', '보호관찰소', '전자감독', '소년원', '청소년비행예방센터', '법무부', '검찰', '교정', '출입국'],
+  keywords:           [],   // 신규 설치/배포 환경에서는 비어 있어야 한다 — 사용자가 빠른 키워드를 직접 선택
   excludes:           [],
   recipients:         [],
   reportType:         'daily',

@@ -726,18 +726,87 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
         </div>
       )}
 
-      {/* 결과 0건 친절 안내 */}
-      {total === 0 && report.collectionDiagnostics?.length > 0 && (
+      {/* 결과 0건 친절 안내 + debugInfo 단계별 표시 */}
+      {total === 0 && (report.collectionDiagnostics?.length > 0 || report.debugInfo) && (
         <div style={S.zeroBox}>
           <div style={S.zeroTitle}>📭 최종 수집 결과 0건</div>
           <div style={S.zeroDetail}>
             {(() => {
+              const di = report.debugInfo;
+              if (di) {
+                const lines = [
+                  `원본 수집 ${di.totalRaw}건 (Google ${di.sourceCountsRaw?.google || 0}, Naver ${di.sourceCountsRaw?.naver || 0})`,
+                  `날짜 필터 후 ${di.afterDateFilter}건 (제외 ${Math.max(0, di.totalRaw - di.afterDateFilter)}건)`,
+                  `중복 제거 후 ${di.afterDedupe}건`,
+                  di.requireAllKeywords
+                    ? `AND 필터 제외 ${di.allKeywordFilteredOut}건 (필터 후 ${di.afterAllKeywordFilter}건)`
+                    : null,
+                  di.requireAllKeywords && di.keywordsForAllMatch?.length
+                    ? `최종 키워드: ${di.keywordsForAllMatch.join(', ')}`
+                    : null,
+                ].filter(Boolean);
+                const guidance = di.requireAllKeywords
+                  && di.keywordsForAllMatch?.length < (di.keywordsOriginal?.length || 0)
+                  ? `안내: ${di.keywordsOriginal.join(', ')} 중 일부가 포함 관계로 판단되어 ${di.keywordsForAllMatch.join(', ')} 기준으로 필터링했습니다.`
+                  : null;
+                return (
+                  <>
+                    {lines.map((l, i) => <div key={i}>· {l}</div>)}
+                    {guidance && <div style={{ marginTop: 6, color: '#92400e' }}>{guidance}</div>}
+                  </>
+                );
+              }
               const totalRaw    = report.collectionDiagnostics.reduce((s, d) => s + (d.raw || 0), 0);
               const totalDateOut= report.collectionDiagnostics.reduce((s, d) => s + (d.dateOut || 0), 0);
               if (totalRaw === 0) return '뉴스 소스에서 검색 결과를 가져오지 못했습니다. 관리 → 검색 테스트로 raw 결과를 확인해 보세요.';
               return `Raw 검색 결과는 ${totalRaw}건이 있었으나, 기간 외 제외(${totalDateOut}건) 등으로 모두 제외되었습니다. 수집 기간을 늘리거나 키워드를 단순화해 보세요.`;
             })()}
           </div>
+        </div>
+      )}
+
+      {/* 검색 진단 — debugInfo 요약 (수집된 결과가 있을 때도 항상 노출) */}
+      {report.debugInfo && (
+        <div style={S.panel}>
+          <div style={S.panelLabel}>🔬 검색 진단 (단계별 수치)</div>
+          <div style={S.deptRow}>
+            <span style={S.deptName}>원본 수집 (Google)</span>
+            <span style={S.deptCnt}>{report.debugInfo.sourceCountsRaw?.google || 0}건</span>
+          </div>
+          <div style={S.deptRow}>
+            <span style={S.deptName}>원본 수집 (Naver)</span>
+            <span style={S.deptCnt}>{report.debugInfo.sourceCountsRaw?.naver || 0}건</span>
+          </div>
+          <div style={S.deptRow}>
+            <span style={S.deptName}>날짜 필터 후</span>
+            <span style={S.deptCnt}>{report.debugInfo.afterDateFilter}건</span>
+          </div>
+          <div style={S.deptRow}>
+            <span style={S.deptName}>중복 제거 후</span>
+            <span style={S.deptCnt}>{report.debugInfo.afterDedupe}건</span>
+          </div>
+          {report.debugInfo.requireAllKeywords && (
+            <>
+              <div style={S.deptRow}>
+                <span style={S.deptName}>AND 필터 제외</span>
+                <span style={{ ...S.deptCnt, color: '#dc2626' }}>−{report.debugInfo.allKeywordFilteredOut}건</span>
+              </div>
+              <div style={S.deptRow}>
+                <span style={S.deptName}>AND 필터 후</span>
+                <span style={S.deptCnt}>{report.debugInfo.afterAllKeywordFilter}건</span>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#475569', lineHeight: 1.6 }}>
+                <div>입력 키워드: <strong>{(report.debugInfo.keywordsOriginal || []).join(', ') || '—'}</strong></div>
+                <div>AND 필터 적용 키워드: <strong>{(report.debugInfo.keywordsForAllMatch || []).join(', ') || '—'}</strong></div>
+                {(report.debugInfo.keywordsForAllMatch?.length || 0)
+                  < (report.debugInfo.keywordsOriginal?.length || 0) && (
+                  <div style={{ marginTop: 4, color: '#92400e' }}>
+                    ℹ️ 포함 관계로 판단되어 더 긴 키워드 기준으로 자동 축약되었습니다.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

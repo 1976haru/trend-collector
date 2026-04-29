@@ -71,6 +71,71 @@ export async function fetchSourceRaw(keyword, { useGoogle = true, useNaver = tru
 }
 
 /**
+ * 검색 테스트 시뮬레이션 — 실 수집과 동일한 단계(키워드별 검색 → 기간 → 중복 → AND)를
+ * 거치되 본문 추출/감정 분석은 생략한다. 관리자 화면 검색 테스트 패널에서 사용.
+ */
+export async function simulateSearch({
+  keywords = [],
+  useGoogle = true,
+  useNaver = true,
+  requireAll = false,
+  period = '7d',
+  fromDate = '',
+  toDate = '',
+} = {}) {
+  const kws = (keywords || []).map(k => String(k).trim()).filter(Boolean);
+  if (!kws.length) throw new Error('keyword 가 필요합니다.');
+
+  const sourceCountsRaw = { google: 0, naver: 0 };
+  const sourceErrors    = { google: null, naver: null };
+  const all = [];
+  for (const kw of kws) {
+    const r = await fetchSourceRaw(kw, { useGoogle, useNaver });
+    sourceCountsRaw.google += r.google.articles.length;
+    sourceCountsRaw.naver  += r.naver.articles.length;
+    if (r.google.error && !sourceErrors.google) sourceErrors.google = r.google.error;
+    if (r.naver.error  && !sourceErrors.naver)  sourceErrors.naver  = r.naver.error;
+    for (const a of r.google.articles) { a.sourceProvider = 'google'; all.push(a); }
+    for (const a of r.naver.articles)  { a.sourceProvider = 'naver';  all.push(a); }
+  }
+
+  const periodResolved = resolvePeriod({ collectPeriod: period, collectFromDate: fromDate, collectToDate: toDate });
+  const filtered  = applyPeriodFilter(all, periodResolved);
+  let processed   = filtered.kept;
+  const afterDate = processed.length;
+  processed       = dedupe(processed);
+  const afterDedupe = processed.length;
+
+  let keywordsForAllMatch = kws.slice();
+  let afterAllKw = processed.length;
+  let allFilteredOut = 0;
+  if (requireAll && kws.length > 1) {
+    keywordsForAllMatch = collapseContainedKeywords(kws);
+    const before = processed.length;
+    processed    = applyRequireAllKeywords(processed, keywordsForAllMatch);
+    afterAllKw   = processed.length;
+    allFilteredOut = before - afterAllKw;
+  }
+
+  return {
+    keywords:               kws,
+    keywordsForAllMatch,
+    requireAll:             !!requireAll && kws.length > 1,
+    sourceCountsRaw,
+    sourceErrors,
+    afterDateFilter:        afterDate,
+    afterDedupe,
+    afterAllKeywordFilter:  afterAllKw,
+    allKeywordFilteredOut:  allFilteredOut,
+    period: { label: periodResolved.label, from: new Date(periodResolved.from).toISOString(), to: new Date(periodResolved.to).toISOString() },
+    sample: processed.slice(0, 10).map(a => ({
+      title: a.title, source: a.source, date: a.date, rawDate: a.rawDate, url: a.url,
+      keyword: a.keyword, sourceProvider: a.sourceProvider,
+    })),
+  };
+}
+
+/**
  * 단일 키워드에 대해 활성화된 모든 소스를 병렬 호출.
  * 한 소스가 실패해도 다른 소스는 계속 진행한다.
  * @param {string} keyword
@@ -200,13 +265,56 @@ function applyPeriodFilter(articles, period) {
   return { kept, outOfRange, parseFailed };
 }
 
+// 정규화: 공백·특수문자·HTML 제거 + 소문자
+// 한국어는 stem 이 어렵기 때문에 “정규화 후 substring” 방식으로 형태소 차이를 흡수.
+export function normalizeKeyword(s = '') {
+  return String(s)
+    .replace(/<[^>]*>/g, ' ')          // HTML 태그
+    .replace(/&[a-z#0-9]+;/gi, ' ')    // HTML 엔티티
+    .toLowerCase()
+    .replace(/[\s ​]+/g, '') // 모든 공백 제거
+    .replace(/[“”"'‘’`,.\-_()\[\]{}<>!?·…/\\|:;~+*%&^$#@=]/g, ''); // 흔한 특수문자
+}
+
+/**
+ * 포함 관계 키워드 축약:
+ *   ["보호관찰", "보호관찰소"] → ["보호관찰소"]
+ *   ["보호관찰", "출입국"]   → ["보호관찰", "출입국"]
+ * 더 긴 키워드(상위 키워드)에 정규화된 짧은 키워드가 substring 으로 포함되면
+ * 짧은 키워드는 제거 — 더 긴 쪽이 매칭되면 짧은 쪽도 자동 만족이기 때문.
+ */
+export function collapseContainedKeywords(keywords = []) {
+  const norm = keywords.map(k => ({ raw: k, n: normalizeKeyword(k) })).filter(x => x.n);
+  if (norm.length < 2) return keywords.slice();
+  // 긴 것부터 정렬 — 짧은 키워드가 긴 것에 포함되는지 검사
+  norm.sort((a, b) => b.n.length - a.n.length);
+  const kept = [];
+  for (const cand of norm) {
+    const isContained = kept.some(k => k.n !== cand.n && k.n.includes(cand.n));
+    if (!isContained) kept.push(cand);
+  }
+  // 원본 순서 유지하며 결과 재구성
+  const keptSet = new Set(kept.map(k => k.raw));
+  return keywords.filter(k => keptSet.has(k));
+}
+
 // 모든 키워드를 포함하는 기사만 (requireAllInclude=true 일 때만 적용)
+// title + summary + contentText + source 를 합쳐 정규화된 substring 매칭.
+// ※ a.keyword 는 “검색에 사용된 키워드”(search query) 이므로 haystack 에 포함시키면
+//    AND 필터가 자명하게 통과하여 무의미해진다 — 일부러 제외한다.
+// collapsed 결과가 1개여도 그대로 적용 — 그 단일 키워드를 반드시 포함해야 함.
 function applyRequireAllKeywords(articles, keywords = []) {
-  if (!keywords || keywords.length < 2) return articles;
-  const lows = keywords.map(k => String(k).toLowerCase());
+  const normKws = (keywords || []).map(normalizeKeyword).filter(Boolean);
+  if (!normKws.length) return articles;
   return articles.filter(a => {
-    const hay = `${a.title || ''} ${a.summary || ''} ${a.contentText || ''}`.toLowerCase();
-    return lows.every(k => hay.includes(k));
+    const hayRaw = [
+      a.title || '',
+      a.summary || '',
+      a.contentText || '',
+      a.source || '',
+    ].join(' ');
+    const hay = normalizeKeyword(hayRaw);
+    return normKws.every(k => hay.includes(k));
   });
 }
 
@@ -501,9 +609,14 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   const cAfterExclude = countByKeySrc(processed);
 
   // 4) 사용자가 명시적으로 켰을 때만 모든 키워드 포함 필터
+  //    포함 관계 키워드를 collapse 한 뒤 정규화 substring 으로 검사.
+  const beforeAllKw = processed.length;
+  let keywordsForAllMatch = cfg.keywords.slice();
   if (cfg.requireAllInclude === true && cfg.keywords?.length > 1) {
-    processed = applyRequireAllKeywords(processed, cfg.keywords);
+    keywordsForAllMatch = collapseContainedKeywords(cfg.keywords);
+    processed = applyRequireAllKeywords(processed, keywordsForAllMatch);
   }
+  const afterAllKw = processed.length;
 
   // 5) 최대 30건
   if (processed.length > 30) processed = processed.slice(0, 30);
@@ -534,6 +647,34 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   }
   // dateUnknown 카운트
   const dateUnknownCount = processed.filter(a => a.dateUnknown).length;
+
+  // 단계별 진단 — debugInfo (검색 키워드 처리 / 단계별 수치)
+  const sourceCountsRaw = Object.entries(rawByKeySrc).reduce((m, [k, v]) => {
+    const sp = k.split('//')[1] || 'unknown';
+    m[sp] = (m[sp] || 0) + v;
+    return m;
+  }, {});
+  const totalRaw = Object.values(sourceCountsRaw).reduce((s, v) => s + v, 0);
+  const afterDateFilterCount   = filtered.kept.length;
+  const afterDedupeCount       = (function () {
+    // 중복 제거 직후 시점은 이미 processed 변수가 진행됐기 때문에
+    // cAfterDedupe 합으로 계산
+    return Object.values(cAfterDedupe).reduce((s, v) => s + v, 0);
+  })();
+  const debugInfo = {
+    keywordsOriginal:    cfg.keywords.slice(),
+    keywordsNormalized:  cfg.keywords.map(normalizeKeyword),
+    keywordsForAllMatch,
+    requireAllKeywords:  cfg.requireAllInclude === true && cfg.keywords?.length > 1,
+    sourceCountsRaw,
+    totalRaw,
+    afterDateFilter:        afterDateFilterCount,
+    afterDedupe:            afterDedupeCount,
+    afterAllKeywordFilter:  afterAllKw,
+    allKeywordFilteredOut:  Math.max(0, beforeAllKw - afterAllKw),
+    period: { label: period.label, from: new Date(period.from).toISOString(), to: new Date(period.to).toISOString() },
+  };
+  console.log('[collector] debugInfo', JSON.stringify(debugInfo));
 
   // 2) 각 기사에 mediaType + 기관/언론 구분 부여
   for (const a of processed) {
@@ -739,6 +880,7 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     // 단계별 수집 진단 (키워드 × 소스)
     collectionDiagnostics,
     dateUnknownCount,
+    debugInfo,
 
     // 분석
     mediaTypes:    MEDIA_TYPES,

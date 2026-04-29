@@ -105,6 +105,7 @@ export default function App() {
             onRemoveExclude={cfg.removeExclude}
             onToggleFilterAds={cfg.setFilterAds}
             onToggleRequireAll={cfg.setRequireAll}
+            onClearKeywords={() => cfg.update({ keywords: [] })}
             loading={cfg.loading || rep.loading}
             onCollect={async () => {
               const r = await rep.collect();

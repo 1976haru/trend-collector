@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import authRouter, { requireAuth } from './auth.js';
 import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
   listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick } from './store.js';
-import { runCollection, reextractReport, fetchSourceRaw } from './collector.js';
+import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
@@ -457,6 +457,29 @@ api.post('/admin/test-search', async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── 관리자: 검색 시뮬레이션 (다중 키워드 + AND + 기간 필터) ────
+api.post('/admin/simulate-search', async (req, res) => {
+  try {
+    const b = req.body || {};
+    let kws = [];
+    if (Array.isArray(b.keywords))      kws = b.keywords;
+    else if (typeof b.keyword === 'string') kws = b.keyword.split(/[,\n]/);
+    kws = kws.map(s => String(s || '').trim()).filter(Boolean);
+    const r = await simulateSearch({
+      keywords:    kws,
+      useGoogle:   b.useGoogle !== false,
+      useNaver:    b.useNaver  !== false,
+      requireAll:  !!b.requireAll,
+      period:      b.period   || '7d',
+      fromDate:    b.fromDate || '',
+      toDate:      b.toDate   || '',
+    });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    res.status(400).json({ error: e.message || String(e) });
   }
 });
 
