@@ -1,6 +1,19 @@
 # 📌 TODO
 
-## ✅ 이번 라운드 (Naver News 병합 수집)
+## ✅ 이번 라운드 (PDF 워크플로 안정화 + n시간 직접 + Trends 스텁)
+
+- [x] **PDF fetch + blob** — 클라이언트가 응답을 검증(content-type, %PDF 매직)하고 오류 시 화면 박스 + HTML 디버그 링크 노출.
+- [x] **PDF preview / download 분리** — 미리보기는 `window.open(blob)`, 다운로드는 `<a download>` 자동 트리거.
+- [x] **n시간 직접 입력** — ScheduleSettings 에 1~168 입력 + Enter/blur 검증, 빠른 선택 3·6·12·24·48시간.
+- [x] **PDF 원문형(신문 카드) 재설계** — 헤더(언론사·매체유형·소스), 큰 제목(Noto Serif KR), 기자/날짜, 대표 이미지, 본문 paragraph, 분석 박스(감정/근거/부서/우선순위), 보고용 한 줄, 원문 링크.
+- [x] **HTML sanitize 강화** — sanitize-html 화이트리스트 (p/br/strong/em/a/figure/figcaption/img/h2~4/ul/ol/li/blockquote/span). `<font>` → `<span>`, `<a>` 자동 target=_blank rel=noopener.
+- [x] **보고용 한 줄** — 기사마다 “{제목} — [{매체}] {감정}({이슈유형}), {부서} · {대응}” 자동 생성. 메일 본문에도 노출.
+- [x] **부서 매핑 확장** — 기획조정실 / 대변인실 추가 (총 9 → 11개).
+- [x] **원문형 / 분석형 토글** + **부정·긴급 우선 정렬 토글** (ReportDetail).
+- [x] **Google Trends 스텁** — `server/trends/googleTrends.js` (provider 선택형, 비활성 기본, 실패해도 보고서 정상). UI 토글 + 비교 기간 선택 패널. /api/health 에 trends 상태 노출.
+- [x] **디버그 endpoint** — `/api/reports/:id/html-debug`, `/api/reports/:id/articles/:articleId/debug`.
+
+## ✅ 직전 라운드 (Naver News 병합 수집)
 
 - [x] **server/sources/naver.js** — Naver Search API (`/v1/search/news.json`), `<b>` 태그 strip, 도메인→매체명 매핑(50+), 10s timeout.
 - [x] **collector 다중 소스 디스패처** — `fetchAllSources(keyword, cfg)` 가 Promise.allSettled 로 Google + Naver 병렬 호출. 한 소스 실패해도 나머지 진행.

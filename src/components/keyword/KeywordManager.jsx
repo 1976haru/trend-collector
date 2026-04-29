@@ -143,6 +143,48 @@ export default function KeywordManager({
         </div>
       )}
 
+      {/* 검색 인식 분석 (Google Trends) */}
+      {config && (
+        <div style={S.panel}>
+          <div style={S.label}>🔎 검색 인식 분석 (Google Trends)</div>
+          <label style={S.toggle}>
+            <input type="checkbox" checked={!!config.googleTrendsEnabled}
+              onChange={e => onUpdateConfig({ googleTrendsEnabled: e.target.checked })}
+              disabled={!health?.trends?.configured} />
+            <span>
+              검색 관심도 + 관련/급상승 검색어 비교 분석 사용
+              {!health?.trends?.configured && <span style={S.warn}> ⚠️ GOOGLE_TRENDS_ENABLED 환경변수 미설정</span>}
+              {health?.trends?.configured && health?.trends?.provider && (
+                <span style={{ fontSize: 11, color: '#888', marginLeft: 6 }}>(provider: {health.trends.provider})</span>
+              )}
+            </span>
+          </label>
+          {config.googleTrendsEnabled && (
+            <>
+              <div style={{ ...S.fieldLabel, marginTop: 10 }}>비교 기간</div>
+              <div style={S.intRow}>
+                {[
+                  { v: '7d',  l: '최근 7일' },
+                  { v: '30d', l: '최근 30일' },
+                  { v: '90d', l: '최근 90일' },
+                  { v: '12m', l: '최근 12개월' },
+                ].map(o => (
+                  <button key={o.v}
+                    style={{ ...S.intBtn, ...(config.trendsTimeframe === o.v ? S.intOn : {}) }}
+                    onClick={() => onUpdateConfig({ trendsTimeframe: o.v })}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+              <div style={S.tipNote}>
+                💡 Google Trends 정식 API 는 alpha 단계로 일반 운영 환경에서 호출이 제한됩니다.
+                현재는 연동 구조만 준비되어 있으며, provider 가 활성화되면 자동으로 보고서에 반영됩니다.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* 뉴스 소스 */}
       {config && (
         <div style={S.panel}>
@@ -226,4 +268,12 @@ const S = {
   warn:     { color: '#c53030', fontSize: 11, marginLeft: 4 },
   errBox:   { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030',
               padding: '8px 11px', borderRadius: 7, fontSize: 12, marginTop: 8 },
+
+  fieldLabel: { fontSize: 11.5, fontWeight: 600, color: '#444', display: 'block', marginBottom: 5 },
+  intRow:     { display: 'flex', flexWrap: 'wrap', gap: 5 },
+  intBtn:     { minHeight: 38, padding: '6px 12px', borderRadius: 8, border: '2px solid #e5e0d8',
+                background: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
+  intOn:      { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
+  tipNote:    { background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
+                padding: '8px 11px', borderRadius: 8, fontSize: 11.5, lineHeight: 1.6, marginTop: 8 },
 };

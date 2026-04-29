@@ -12,6 +12,7 @@ import { analyzeSentiments } from './sentiment.js';
 import { extractMany } from './articleExtractor.js';
 import { suggestDepartments, countDepartments } from './departments.js';
 import { fetchNaverNews, isNaverConfigured } from './sources/naver.js';
+import { fetchTrendInterest, fetchRelatedQueries, isTrendsEnabled } from './trends/googleTrends.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -101,13 +102,15 @@ function extract(block, tag) {
 }
 
 function clean(s = '') {
-  return String(s)
+  // 1) entity 먼저 decode → 2) raw 태그 strip → 3) 다시 한 번 (이중 인코딩 방어)
+  let v = String(s)
     .replace(/<!\[CDATA\[/g, '')
     .replace(/\]\]>/g, '')
-    .replace(/<[^>]*>/g, '')        // 인라인 HTML 제거 — 링크/태그가 텍스트로 새는 문제 방지
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .trim();
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+  v = v.replace(/<[^>]*>/g, '');
+  v = v.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  return v.replace(/<[^>]*>/g, '').trim();
 }
 
 function extractSourceFromTitle(t) {
@@ -158,6 +161,24 @@ function applyPeriodFilter(articles, period) {
     kept.push(a);
   }
   return { kept, outOfRange, parseFailed };
+}
+
+// 보고용 한 줄 요약 — 매체·감정·부서를 합쳐 1문장.
+function buildBriefLine(a) {
+  const sLbl  = a.sentiment?.label || '중립';
+  const issue = a.sentiment?.issueType ? ` (${a.sentiment.issueType})` : '';
+  const dept  = a.departments?.[0]?.name || '';
+  const need  = a.priority === '긴급'
+    ? '대응 즉시 검토 필요'
+    : a.priority === '주의'
+    ? '대응 검토 권장'
+    : '참고';
+
+  // title 의 첫 절 사용 (괄호 등 제거)
+  const titleClean = String(a.title || '').replace(/\s*[\[(].*?[\])]\s*/g, ' ').replace(/\s+-\s+[^-]+$/, '').trim();
+  const head = titleClean.length > 50 ? titleClean.slice(0, 48) + '…' : titleClean;
+
+  return `${head} — [${a.source || '미상'}] ${sLbl}${issue}${dept ? `, ${dept}` : ''} · ${need}`;
 }
 
 // 우선순위 계산 — 부서 / 매체 / 감정 / 부정 키워드로 라벨링
@@ -390,10 +411,11 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   // 6) 위험 등급 — 부정 비율과 급상승 유무로 결정
   const riskLevel = computeRiskLevel(sentiment, trending);
 
-  // 7) 부서 추천 + 우선순위 (각 기사)
+  // 7) 부서 추천 + 우선순위 + 보고용 한 줄 (각 기사)
   for (const a of processed) {
     a.departments = suggestDepartments(a);
     a.priority    = computePriority(a);
+    a.briefLine   = buildBriefLine(a);
   }
 
   // 7.3) 소스별 통계 (병합 후 dedupe·필터 통과 기준)
@@ -430,6 +452,24 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     sentiment, mediaCounts, departmentCounts, trending, actionRequired,
   });
 
+  // Google Trends — 활성 시에만 호출, 실패해도 보고서는 정상 생성
+  let trendsInsight = null;
+  if (isTrendsEnabled() && cfg.googleTrendsEnabled !== false) {
+    try {
+      const interest = await fetchTrendInterest({
+        keywords: cfg.keywords.slice(0, 5),
+        timeframe: cfg.trendsTimeframe || '7d',
+        geo: cfg.trendsGeo || 'KR',
+      });
+      const related = cfg.keywords[0]
+        ? await fetchRelatedQueries({ keyword: cfg.keywords[0], timeframe: cfg.trendsTimeframe || '7d', geo: cfg.trendsGeo || 'KR' })
+        : null;
+      trendsInsight = { interest, related };
+    } catch (e) {
+      trendsInsight = { error: e.message || String(e) };
+    }
+  }
+
   const report = {
     id:          newId(),
     title:       reportTitle,
@@ -455,15 +495,17 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     mediaCounts,
     keywordCounts,
     departmentCounts,
-    sourceCounts,                         // { google: n, naver: m }
+    sourceCounts,
     sentiment,
     trending,
     groups,
-    summaryText,                          // 기존 요약 (한문장)
-    briefingText,                         // 신규 — 총평/주요동향/대응
+    summaryText,
+    briefingText,
+    trendsInsight,                         // Google Trends 결과 (비활성 시 null)
     riskLevel,
     extractedCount,
     extractionFailed,
+    includeImages: cfg.includeImages !== false,
 
     // 분류된 이슈
     negativeIssues, positiveIssues, neutralIssues, actionRequired,

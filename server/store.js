@@ -36,8 +36,17 @@ const DEFAULT_CONFIG = {
   includeImages:      true,         // PDF 에 이미지 포함
 
   // ── 뉴스 소스 ─────────────────────────────────
-  useGoogleNews:      true,         // Google News RSS 사용
-  useNaverNews:       false,        // Naver News Search API 사용 (env 키 필요)
+  useGoogleNews:      true,
+  useNaverNews:       false,
+
+  // ── Google Trends ─────────────────────────────
+  googleTrendsEnabled: false,       // 환경변수 + UI 토글 모두 ON 일 때만 활성
+  trendsTimeframe:     '7d',        // '7d' | '30d' | '90d' | '12m'
+  trendsGeo:           'KR',        // 'KR' 또는 시도 코드 (확장)
+
+  // ── 보기 모드 ─────────────────────────────────
+  articleViewMode:     'paper',     // 'paper'(원문형) | 'analytic'(분석형)
+  sortNegativeFirst:   true,        // 부정/긴급 우선 정렬
 
   // ── 자동 발송 ─────────────────────────────────
   autoEmail:          true,

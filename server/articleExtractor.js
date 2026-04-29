@@ -93,7 +93,12 @@ async function fetchHtml(url) {
 }
 
 function cleanText(s = '') {
-  return String(s).replace(/\s+/g, ' ').trim();
+  // entity decode 후 raw 태그 제거 (이중 인코딩 방어)
+  let v = String(s)
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+  v = v.replace(/<[^>]+>/g, ' ');
+  return v.replace(/\s+/g, ' ').trim();
 }
 
 // 절대 URL 변환

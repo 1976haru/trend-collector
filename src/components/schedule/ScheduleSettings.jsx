@@ -2,15 +2,18 @@
 // ScheduleSettings.jsx — 자동 수집 / 발송 / 알림 풀에디터
 // ─────────────────────────────────────────────
 
+import { useState, useEffect } from 'react';
 import { fmtFull, fmtUntil } from '../../utils/datetime.js';
 
-const INTERVAL_OPTIONS = [
-  { v: 6,  label: '6시간마다' },
-  { v: 10, label: '10시간마다' },
-  { v: 12, label: '12시간마다' },
-  { v: 24, label: '24시간마다' },
-  { v: 48, label: '48시간마다' },
-];
+const QUICK_INTERVALS = [3, 6, 12, 24, 48];
+
+function clampHours(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return null;
+  if (n < 1)   return 1;
+  if (n > 168) return 168;
+  return n;
+}
 
 export default function ScheduleSettings({ config, health, onUpdate }) {
   const c = config || {};
@@ -18,6 +21,22 @@ export default function ScheduleSettings({ config, health, onUpdate }) {
   const sch = h.schedule || {};
 
   const set = (patch) => onUpdate(patch);
+
+  // n시간 직접 입력 — 로컬 입력은 string 으로, blur 시점에 검증·저장
+  const [hoursStr, setHoursStr] = useState(String(c.intervalHours || 6));
+  const [hoursErr, setHoursErr] = useState('');
+  useEffect(() => { setHoursStr(String(c.intervalHours || 6)); }, [c.intervalHours]);
+
+  function commitHours() {
+    const n = clampHours(hoursStr);
+    if (n === null) {
+      setHoursErr('숫자만 입력하세요 (1~168)');
+      return;
+    }
+    if (n !== Number(hoursStr)) setHoursStr(String(n));
+    setHoursErr('');
+    if (n !== c.intervalHours) set({ intervalHours: n });
+  }
 
   return (
     <div>
@@ -83,13 +102,26 @@ export default function ScheduleSettings({ config, health, onUpdate }) {
 
         {c.scheduleMode === 'interval' && (
           <div style={S.field}>
-            <label style={S.fieldLabel}>수집 주기</label>
+            <label style={S.fieldLabel}>수집 주기 (시간 단위, 1 ~ 168)</label>
+
+            <div style={S.hoursRow}>
+              <input type="number" min={1} max={168} step={1}
+                style={{ ...S.hoursInp, ...(hoursErr ? S.hoursErr : {}) }}
+                value={hoursStr}
+                onChange={e => setHoursStr(e.target.value)}
+                onBlur={commitHours}
+                onKeyDown={e => e.key === 'Enter' && commitHours()} />
+              <span style={S.hoursUnit}>시간마다 자동 수집</span>
+            </div>
+            {hoursErr && <div style={S.hoursWarn}>{hoursErr}</div>}
+
+            <div style={{ ...S.fieldLabel, marginTop: 10 }}>빠른 선택</div>
             <div style={S.intRow}>
-              {INTERVAL_OPTIONS.map(o => (
-                <button key={o.v}
-                  style={{ ...S.intBtn, ...(Number(c.intervalHours) === o.v ? S.intOn : {}) }}
-                  onClick={() => set({ intervalHours: o.v })}>
-                  {o.label}
+              {QUICK_INTERVALS.map(v => (
+                <button key={v}
+                  style={{ ...S.intBtn, ...(Number(c.intervalHours) === v ? S.intOn : {}) }}
+                  onClick={() => { setHoursStr(String(v)); setHoursErr(''); set({ intervalHours: v }); }}>
+                  {v}시간
                 </button>
               ))}
             </div>
@@ -170,4 +202,12 @@ const S = {
 
   warn: { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030', padding: '7px 10px', borderRadius: 7, fontSize: 11.5, marginTop: 8 },
   tip:  { background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '8px 11px', borderRadius: 8, fontSize: 11.5, lineHeight: 1.6 },
+
+  hoursRow:  { display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 },
+  hoursInp:  { width: 100, padding: '10px 12px', minHeight: 44, fontSize: 16, fontWeight: 700,
+               border: '2px solid #e5e0d8', borderRadius: 8, outline: 'none', background: '#fafaf8',
+               textAlign: 'right', fontFamily: 'inherit' },
+  hoursErr:  { borderColor: '#c53030' },
+  hoursUnit: { fontSize: 13, color: '#444' },
+  hoursWarn: { color: '#c53030', fontSize: 11.5, marginTop: 4 },
 };

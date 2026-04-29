@@ -17,6 +17,7 @@ import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } fro
 import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
 import { isKakaoEnabled } from './notifyKakao.js';
 import { isNaverConfigured } from './sources/naver.js';
+import { isTrendsEnabled, getProvider as getTrendsProvider } from './trends/googleTrends.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, '..');
@@ -51,6 +52,11 @@ app.get('/api/health', async (_req, res) => {
       googleNews:      cfg.useGoogleNews !== false,
       naverNews:       !!cfg.useNaverNews && isNaverConfigured(),
       naverConfigured: isNaverConfigured(),
+    },
+    trends: {
+      enabled:        isTrendsEnabled() && cfg.googleTrendsEnabled !== false,
+      configured:     isTrendsEnabled(),
+      provider:       getTrendsProvider(),
     },
     schedule: {
       autoCollect:   cfg.autoCollect !== false,
@@ -160,6 +166,8 @@ api.put('/config', async (req, res) => {
     'collectPeriod', 'collectFromDate', 'collectToDate',
     'extractContent', 'includeImages',
     'useGoogleNews', 'useNaverNews',
+    'googleTrendsEnabled', 'trendsTimeframe', 'trendsGeo',
+    'articleViewMode', 'sortNegativeFirst',
   ];
   const patch = {};
   for (const k of allowed) {
@@ -318,6 +326,49 @@ app.get('/api/reports/:id/pdf/download', requireAuth, async (req, res) => {
 // ── 호환 — 기존 /pdf 는 download 로 ─────────────
 app.get('/api/reports/:id/pdf', requireAuth, (req, res) => {
   res.redirect(302, `/api/reports/${encodeURIComponent(req.params.id)}/pdf/download`);
+});
+
+// ── 디버그: 보고서 → 렌더링된 HTML 그대로 (PDF 변환 없이) ──
+app.get('/api/reports/:id/html-debug', requireAuth, async (req, res) => {
+  try {
+    const report = await loadReport(req.params.id);
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderReportHtml(report));
+  } catch (e) {
+    res.status(500).type('text/html; charset=utf-8').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`);
+  }
+});
+
+// ── 디버그: 단일 기사의 추출 결과 (JSON) ─────────
+app.get('/api/reports/:id/articles/:articleId/debug', requireAuth, async (req, res) => {
+  try {
+    const report = await loadReport(req.params.id);
+    const a = (report.articles || []).find(x => x.id === req.params.articleId);
+    if (!a) return res.status(404).json({ error: 'article not found' });
+    res.json({
+      id: a.id,
+      title: a.title,
+      url: a.url,
+      source: a.source,
+      mediaType: a.mediaType,
+      sourceProvider: a.sourceProvider,
+      extracted: a.extracted,
+      extractionError: a.extractionError,
+      reporter: a.reporter,
+      publishedMeta: a.publishedMeta,
+      contentTextLength: a.contentText?.length || 0,
+      contentHtmlLength: a.contentHtml?.length || 0,
+      images: a.images || [],
+      sentiment: a.sentiment,
+      departments: a.departments,
+      priority: a.priority,
+      briefLine: a.briefLine,
+      // 본문 미리보기 (첫 800자)
+      contentPreview: (a.contentText || '').slice(0, 800),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── SPA 정적 서빙 ────────────────────────────

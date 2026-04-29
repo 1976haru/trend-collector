@@ -1,8 +1,11 @@
 // ─────────────────────────────────────────────
 // reportTemplate.js — 법무부 일일보고 PDF / 메일 / 인쇄용 HTML
-// 모든 사용자 데이터는 esc() 후 출력. 외부 이미지는 referrerpolicy=no-referrer.
+// 기사 본문은 sanitize-html 로 화이트리스트 정제.
+// 기사 섹션은 신문 카드(원문형) 레이아웃.
 // 루트에 id="report-pdf-root" 를 두어 Puppeteer 가 렌더링 완료를 감지.
 // ─────────────────────────────────────────────
+
+import sanitizeHtml from 'sanitize-html';
 
 function esc(s = '') {
   return String(s)
@@ -24,13 +27,60 @@ function safeUrl(u = '') {
   return /^https?:\/\//i.test(s) ? s : '';
 }
 
-// 본문 추출 결과의 인라인 HTML 한 번 더 안전화
-function sanitize(html = '') {
-  return String(html)
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/ on[a-z]+="[^"]*"/gi, '')
-    .replace(/ on[a-z]+='[^']*'/gi, '');
+// ── 본문 HTML 화이트리스트 정제 ─────────────────
+// <font>, <a> 같은 태그가 텍스트로 새는 문제 차단.
+const SAN_OPTS = {
+  allowedTags:       ['p','br','strong','em','b','i','figure','figcaption','img','h2','h3','h4','ul','ol','li','blockquote','span'],
+  allowedAttributes: {
+    a:   ['href'],
+    img: ['src', 'alt'],
+  },
+  allowedSchemes:    ['http', 'https'],
+  allowedSchemesByTag: { img: ['http', 'https', 'data'] },
+  // 구식 / 위험 태그 통째 제거
+  disallowedTagsMode: 'discard',
+  exclusiveFilter: function (frame) {
+    // 텍스트 0자 + 자식 0개인 빈 p 제거
+    if (frame.tag === 'p' && !frame.text.trim() && !frame.tag.length) return true;
+    return false;
+  },
+  transformTags: {
+    a: (tagName, attribs) => {
+      const href = attribs.href && /^https?:\/\//i.test(attribs.href) ? attribs.href : '';
+      return {
+        tagName: 'a',
+        attribs: href ? { href, target: '_blank', rel: 'noopener noreferrer' } : {},
+      };
+    },
+    img: (tagName, attribs) => {
+      const src = attribs.src && /^https?:\/\//i.test(attribs.src) ? attribs.src : '';
+      if (!src) return { tagName: 'span', attribs: {}, text: '' };
+      return {
+        tagName: 'img',
+        attribs: { src, alt: (attribs.alt || '').slice(0, 200), referrerpolicy: 'no-referrer', loading: 'lazy' },
+      };
+    },
+    font: 'span',
+    b:    'strong',
+    i:    'em',
+  },
+  textFilter: (t) => t.replace(/\s+\n/g, '\n').replace(/[ \t]{2,}/g, ' '),
+};
+
+function strictClean(html = '') {
+  return sanitizeHtml(html, SAN_OPTS);
+}
+
+// 본문 텍스트 (paragraph 단위 분리)
+// 안전 차원에서 텍스트 내부에 raw HTML 태그가 남아있으면 한 번 더 strip.
+function paragraphsFromText(text = '') {
+  return String(text)
+    .split(/\n+/)
+    .map(s => s
+      .replace(/<[^>]+>/g, ' ')      // 잔존 raw 태그 제거
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter(Boolean);
 }
 
 function priorityBadge(p) {
@@ -47,6 +97,90 @@ function sentClass(label) {
   return label === '긍정' ? 'pos' : label === '부정' ? 'neg' : 'neu';
 }
 
+// ── 기사 한 건의 신문 카드 형태 섹션 ────────────
+function renderArticleCard(a, i, includeImages = true) {
+  const u        = safeUrl(a.url);
+  const sLbl     = a.sentiment?.label || '중립';
+  const reasons  = (a.sentiment?.reasons || []).join(' · ');
+  const matchedNeg = (a.sentiment?.matchedKeywords?.negative || []).slice(0, 6);
+  const matchedPos = (a.sentiment?.matchedKeywords?.positive || []).slice(0, 6);
+  const depts    = (a.departments || []).map(d => d.name).join(', ');
+  const issueType = a.sentiment?.issueType || '';
+
+  // 본문 — extracted 면 cleanHtml 우선, 아니면 contentText 문단 분리, 그것도 없으면 summary
+  let bodyHtml = '';
+  if (a.contentHtml && a.extracted) {
+    bodyHtml = strictClean(a.contentHtml);
+  } else if (a.contentText && a.extracted) {
+    bodyHtml = paragraphsFromText(a.contentText).map(p => `<p>${esc(p)}</p>`).join('');
+  } else {
+    bodyHtml = `<p class="missing">⚠️ 본문 자동 추출 실패 — 원문 링크에서 직접 확인하세요. (${esc(a.extractionError || 'no body')})</p>`
+            + (a.summary ? `<p>${esc(a.summary)}</p>` : '');
+  }
+
+  // 대표 이미지 + 본문 이미지
+  const lead   = (a.images && a.images[0]) || (a.leadImage ? { url: a.leadImage } : null);
+  const inline = includeImages ? (a.images || []).slice(1, 3) : [];
+
+  return `
+    <section class="article" id="a${i + 1}">
+      <div class="article-source">
+        <span class="src-name">${esc(a.source || '미상')}</span>
+        ${a.mediaType ? `<span class="src-tag">${esc(a.mediaType)}</span>` : ''}
+        ${a.sourceProvider ? `<span class="src-provider">${a.sourceProvider === 'naver' ? '🇰🇷 Naver' : '🌍 Google'}</span>` : ''}
+      </div>
+      <h2 class="article-title">${esc(a.title || '제목 없음')}</h2>
+      <div class="article-byline">
+        ${a.reporter ? `<span>✍ ${esc(a.reporter)}</span>` : ''}
+        ${a.date ? `<span>📅 ${esc(a.date)}</span>` : ''}
+        <span class="kw-tag">#${esc(a.keyword || '')}</span>
+        ${issueType ? `<span class="issue-tag">${esc(issueType)}</span>` : ''}
+      </div>
+
+      ${includeImages && lead && safeUrl(lead.url) ? `
+        <figure class="lead-fig">
+          <img src="${esc(safeUrl(lead.url))}" referrerpolicy="no-referrer" loading="lazy"
+               onerror="this.style.display='none'; this.nextElementSibling && (this.nextElementSibling.style.display='none')" />
+          ${lead.caption ? `<figcaption>${esc(lead.caption)}</figcaption>` : ''}
+        </figure>` : ''}
+
+      <div class="article-body">${bodyHtml}</div>
+
+      ${inline.length ? `
+        <div class="inline-imgs">
+          ${inline.map(img => safeUrl(img.url) ? `
+            <figure class="inline-fig">
+              <img src="${esc(safeUrl(img.url))}" referrerpolicy="no-referrer" loading="lazy"
+                   onerror="this.style.display='none'" />
+              ${img.caption ? `<figcaption>${esc(img.caption)}</figcaption>` : ''}
+            </figure>` : '').join('')}
+        </div>` : ''}
+
+      ${a.briefLine ? `<div class="brief-line">📝 <strong>보고용 한 줄:</strong> ${esc(a.briefLine)}</div>` : ''}
+
+      <div class="analysis-box">
+        <div class="analysis-row">
+          <span><strong>감정:</strong> <span class="${sentClass(sLbl)}">${esc(sLbl)}</span> (${a.sentiment?.score ?? 0})</span>
+          <span><strong>대응 우선순위:</strong> ${priorityBadge(a.priority || '참고')}</span>
+        </div>
+        <div class="analysis-row"><strong>판단 근거:</strong> ${esc(reasons || '—')}</div>
+        ${matchedPos.length || matchedNeg.length ? `
+          <div class="analysis-row" style="font-size:9.5pt;">
+            ${matchedPos.length ? `<span class="pos">긍정: ${matchedPos.map(esc).join(', ')}</span>` : ''}
+            ${matchedPos.length && matchedNeg.length ? ' · ' : ''}
+            ${matchedNeg.length ? `<span class="neg">부정: ${matchedNeg.map(esc).join(', ')}</span>` : ''}
+          </div>` : ''}
+        <div class="analysis-row"><strong>관련 부서:</strong> ${esc(depts || '—')}</div>
+      </div>
+
+      <div class="source-link">
+        ${u
+          ? `<strong>원문:</strong> <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`
+          : '<strong>원문 링크 없음</strong>'}
+      </div>
+    </section>`;
+}
+
 // ── 메인 보고서 HTML ───────────────────────────
 export function renderReportHtml(report) {
   const {
@@ -61,11 +195,11 @@ export function renderReportHtml(report) {
     negativeIssues = [], positiveIssues = [], neutralIssues = [],
     actionRequired = [],
     summaryText = '',
+    sourceCounts = {},
+    includeImages = true,
   } = report;
 
   const total = articles.length;
-  const includeImages = report.includeImages !== false;     // 기본 true
-
   const periodLabel = period
     ? `${fmtDate(period.from)} ~ ${fmtDate(period.to)}`
     : '미설정';
@@ -74,7 +208,6 @@ export function renderReportHtml(report) {
     .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}건</td></tr>`).join('');
   const deptRows  = Object.entries(departmentCounts)
     .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}건</td></tr>`).join('');
-  const sourceCounts = report.sourceCounts || {};
   const sourceRows = Object.entries(sourceCounts).map(([k, v]) =>
     `<tr><td>${k === 'google' ? '🌍 Google News' : k === 'naver' ? '🇰🇷 Naver News' : esc(k)}</td><td>${v}건</td></tr>`
   ).join('');
@@ -88,67 +221,8 @@ export function renderReportHtml(report) {
     </li>
   `).join('');
 
-  // 기사 본문 섹션
-  const bodySections = articles.map((a, i) => {
-    const u = safeUrl(a.url);
-    const sLbl = a.sentiment?.label || '중립';
-    const reasons = (a.sentiment?.reasons || []).join(' · ');
-    const matchedPos = (a.sentiment?.matchedKeywords?.positive || []).slice(0, 8);
-    const matchedNeg = (a.sentiment?.matchedKeywords?.negative || []).slice(0, 8);
-    const depts = (a.departments || []).map(d => d.name).join(', ');
-    const issueType = a.sentiment?.issueType || '';
-
-    let bodyHtml = '';
-    if (a.contentHtml && a.extracted) {
-      bodyHtml = `<div class="content">${sanitize(a.contentHtml)}</div>`;
-    } else if (a.contentText && a.extracted) {
-      bodyHtml = a.contentText.split(/\n+/).map(p => `<p>${esc(p)}</p>`).join('');
-    } else {
-      bodyHtml = `<p class="missing">⚠️ 본문 자동 추출 실패 — 원문 링크에서 직접 확인하세요. (${esc(a.extractionError || 'no body')})</p>`
-              + (a.summary ? `<p>${esc(a.summary)}</p>` : '');
-    }
-
-    const imgsHtml = (includeImages && a.images?.length)
-      ? `<div class="imgs">${a.images.slice(0, 3).map(img => `
-          <figure>
-            <img src="${esc(img.url)}" referrerpolicy="no-referrer" loading="lazy"
-                 onerror="this.style.display='none'; this.nextElementSibling && (this.nextElementSibling.style.display='none')" />
-            ${img.caption ? `<figcaption>${esc(img.caption)}</figcaption>` : ''}
-          </figure>
-        `).join('')}</div>`
-      : '';
-
-    return `
-      <section class="article" id="a${i + 1}">
-        <h3>[${i + 1}] ${esc(a.title || '제목 없음')}</h3>
-        ${imgsHtml}
-        <table class="art-meta">
-          <tr><th>언론사</th><td>${esc(a.source || '미상')}</td>
-              <th>날짜</th><td>${esc(a.date || '')}</td></tr>
-          <tr><th>유형</th><td>${esc(a.mediaType || '기타')}</td>
-              <th>기자</th><td>${esc(a.reporter || '—')}</td></tr>
-          <tr><th>키워드</th><td>#${esc(a.keyword || '')}</td>
-              <th>이슈 유형</th><td>${esc(issueType)}</td></tr>
-          <tr><th>관련 부서</th><td colspan="3">${esc(depts || '—')}</td></tr>
-          <tr><th>대응 우선순위</th><td>${priorityBadge(a.priority || '참고')}</td>
-              <th>감정</th><td class="${sentClass(sLbl)}">${esc(sLbl)} (${a.sentiment?.score ?? 0})</td></tr>
-          <tr><th>판단 근거</th><td colspan="3">${esc(reasons)}</td></tr>
-          ${matchedPos.length || matchedNeg.length ? `
-          <tr><th>매칭 키워드</th>
-              <td colspan="3">
-                ${matchedPos.length ? `<span class="pos">긍정: ${matchedPos.map(esc).join(', ')}</span>` : ''}
-                ${matchedPos.length && matchedNeg.length ? ' · ' : ''}
-                ${matchedNeg.length ? `<span class="neg">부정: ${matchedNeg.map(esc).join(', ')}</span>` : ''}
-              </td></tr>` : ''}
-          <tr><th>원문</th><td colspan="3" class="url">${u
-            ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`
-            : '—'}</td></tr>
-        </table>
-        ${a.summary ? `<div class="summary"><strong>요약:</strong> ${esc(a.summary)}</div>` : ''}
-        <div class="bodyLabel"><strong>본문</strong></div>
-        ${bodyHtml}
-      </section>`;
-  }).join('');
+  // 기사 카드 섹션 (원문형)
+  const bodySections = articles.map((a, i) => renderArticleCard(a, i, includeImages !== false)).join('');
 
   const riskBadgeHtml = riskLevel.level === '긴급'
     ? `<span class="riskUrgent">🚨 긴급</span>`
@@ -160,16 +234,17 @@ export function renderReportHtml(report) {
 <html lang="ko"><head>
 <meta charset="utf-8" />
 <title>${esc(title)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet" />
 <style>
   @page { size: A4; margin: 18mm 14mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif; color:#0d1117; line-height:1.55; font-size:10.5pt; }
+  body { font-family: 'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif; color:#0d1117; line-height:1.6; font-size:10.5pt; }
   h1 { font-size: 22pt; margin: 0 0 4pt; }
   h2 { font-size: 14pt; margin: 16pt 0 6pt; padding-bottom:3pt; border-bottom:1.5pt solid #0d1117; page-break-after: avoid; }
   h3 { font-size: 12pt; margin: 10pt 0 4pt; page-break-after: avoid; }
-  p  { margin: 4pt 0; }
+  p  { margin: 6pt 0; }
 
+  /* 표지 */
   .cover { page-break-after: always; padding-top: 30mm; text-align: center; }
   .cover .brand { font-size: 12pt; color: #888; }
   .cover .title { font-size: 24pt; font-weight: 700; margin: 14pt 0 6pt; }
@@ -179,7 +254,7 @@ export function renderReportHtml(report) {
   .cover dd { display: inline; margin: 0; }
   .cover dl br { display: block; }
 
-  .pill { display:inline-block; padding:1pt 7pt; border:1pt solid #0d1117; border-radius:10pt; font-size:9.5pt; margin: 2pt 3pt 0 0; }
+  .pill   { display:inline-block; padding:1pt 7pt; border:1pt solid #0d1117; border-radius:10pt; font-size:9.5pt; margin: 2pt 3pt 0 0; }
   .pillNeg { display:inline-block; padding:1pt 7pt; border:1pt solid #c53030; color:#c53030; border-radius:10pt; font-size:9.5pt; margin: 2pt 3pt 0 0; }
 
   table { width:100%; border-collapse: collapse; font-size:10pt; margin:6pt 0; }
@@ -212,21 +287,61 @@ export function renderReportHtml(report) {
   .issuesBox ol { padding-left: 18pt; margin: 0; }
   .issuesBox li { margin-bottom: 3pt; font-size: 10pt; }
 
-  .article { page-break-before: always; padding-top: 4mm; }
-  .article .imgs { display: flex; flex-wrap: wrap; gap: 6pt; margin: 6pt 0 8pt; }
-  .article figure { margin: 0; flex: 1 1 30%; max-width: 32%; }
-  .article figure img { width: 100%; max-height: 60mm; object-fit: cover; border-radius: 3pt; }
-  .article figcaption { font-size: 8.5pt; color:#666; margin-top: 2pt; }
-  .article .art-meta { margin-bottom: 6pt; }
-  .article .art-meta th { width: 14%; }
-  .article .art-meta td { width: 36%; }
-  .article .summary  { background:#f8f6f2; border-left:2pt solid #999; padding:6pt 10pt; margin:8pt 0; font-size:10pt; }
-  .article .bodyLabel { font-size:10pt; color:#666; margin: 8pt 0 4pt; }
-  .article .content   { font-size: 10.5pt; }
-  .article .content p { margin: 4pt 0; }
-  .article .content a { color:#2563eb; word-break: break-all; }
-  .article .missing   { color:#dc2626; font-size: 10pt; }
-  .article .url a     { color:#2563eb; word-break: break-all; }
+  /* ── 기사 원문형(신문 카드) ── */
+  .article {
+    page-break-before: always;
+    padding: 6mm 2mm 8mm;
+  }
+  .article-source { display: flex; gap: 8pt; align-items: center; font-size: 10pt; color: #555; padding-bottom: 4pt; border-bottom: .5pt solid #ccc; }
+  .article-source .src-name { font-weight: 700; color:#0d1117; font-size: 11pt; }
+  .article-source .src-tag,
+  .article-source .src-provider { padding: 1pt 6pt; border: .5pt solid #d5d0c8; border-radius: 8pt; font-size: 9pt; color:#666; background:#f8f6f2; }
+
+  .article-title {
+    font-family: 'Noto Serif KR', 'Noto Sans KR', serif;
+    font-size: 19pt;
+    font-weight: 700;
+    color: #0d1117;
+    line-height: 1.35;
+    margin: 8pt 0 4pt;
+    page-break-after: avoid;
+  }
+  .article-byline { display: flex; flex-wrap: wrap; gap: 8pt; font-size: 9.5pt; color: #888; margin-bottom: 8pt; }
+  .article-byline .kw-tag { background:#0d1117; color:white; padding: 1pt 7pt; border-radius: 8pt; font-size: 9pt; }
+  .article-byline .issue-tag { background:#e0f2fe; color:#075985; padding: 1pt 7pt; border-radius: 8pt; font-size: 9pt; }
+
+  .lead-fig { margin: 6pt 0 8pt; }
+  .lead-fig img { width: 100%; max-height: 95mm; object-fit: cover; border-radius: 3pt; }
+  .lead-fig figcaption { font-size: 9pt; color:#777; margin-top: 3pt; }
+
+  .article-body { font-size: 11pt; line-height: 1.75; color:#222; text-align: justify; word-break: keep-all; }
+  .article-body p { margin: 6pt 0 8pt; text-indent: 0; }
+  .article-body a { color:#2563eb; word-break: break-all; }
+  .article-body img { max-width: 100%; height: auto; border-radius: 2pt; margin: 4pt 0; }
+  .article-body figure { margin: 6pt 0; }
+  .article-body figcaption { font-size: 9pt; color:#777; }
+  .article-body .missing { color:#dc2626; }
+
+  .inline-imgs { display: flex; flex-wrap: wrap; gap: 6pt; margin: 6pt 0; }
+  .inline-imgs .inline-fig { flex: 1 1 45%; max-width: 47%; margin: 0; }
+  .inline-imgs img { width: 100%; max-height: 60mm; object-fit: cover; border-radius: 3pt; }
+  .inline-imgs figcaption { font-size: 8.5pt; color:#777; margin-top: 2pt; }
+
+  .brief-line {
+    background: #f8f6f2; border-left: 2pt solid #0d1117;
+    padding: 6pt 10pt; margin: 10pt 0 6pt;
+    font-size: 10.5pt; line-height: 1.6;
+  }
+
+  .analysis-box {
+    background: #fafaf6; border: .5pt solid #d5d0c8; border-radius: 4pt;
+    padding: 8pt 12pt; margin: 8pt 0;
+    page-break-inside: avoid;
+  }
+  .analysis-row { display: flex; flex-wrap: wrap; gap: 12pt; font-size: 10pt; padding: 2pt 0; }
+
+  .source-link { font-size: 9.5pt; color: #555; margin-top: 6pt; word-break: break-all; }
+  .source-link a { color: #2563eb; }
 
   .footer { margin-top: 22pt; color:#999; font-size:9.5pt; text-align:center; border-top:.5pt solid #ccc; padding-top:6pt; }
 </style></head><body>
@@ -250,7 +365,6 @@ export function renderReportHtml(report) {
     </dl>
   </section>
 
-  <!-- 총평 / 주요 동향 / 대응 / 부서 -->
   <h2>📝 총평 및 주요 동향</h2>
   <div>${riskBadgeHtml} ${riskLevel.reasons?.length ? `<span style="color:#666; font-size:10pt;">사유: ${riskLevel.reasons.map(esc).join(' · ')}</span>` : ''}</div>
   <div class="briefing">
@@ -263,7 +377,6 @@ export function renderReportHtml(report) {
 
   ${trending.length ? `<div class="alert">📈 <strong>급상승 이슈</strong> — ${trending.slice(0, 5).map(t => `${esc(t.keyword)} (${t.prev}→${t.curr})`).join(', ')}</div>` : ''}
 
-  <!-- 분류된 이슈 -->
   ${negativeIssues.length ? `
   <div class="issuesBox">
     <h3>🔴 부정 이슈 TOP ${negativeIssues.length}</h3>
@@ -274,13 +387,7 @@ export function renderReportHtml(report) {
     <h3>🟢 긍정 이슈 TOP ${positiveIssues.length}</h3>
     <ol>${positiveIssues.map(a => `<li><strong>${esc(a.title)}</strong> <span class="src">[${esc(a.source || '')}]</span> — 근거: ${esc((a.sentiment?.matchedKeywords?.positive || []).slice(0, 4).join(', '))}</li>`).join('')}</ol>
   </div>` : ''}
-  ${neutralIssues.length ? `
-  <div class="issuesBox">
-    <h3>⚪ 중립/단순 보도 ${neutralIssues.length}건</h3>
-    <ol>${neutralIssues.slice(0, 5).map(a => `<li>${esc(a.title)} <span class="src">[${esc(a.source || '')}]</span></li>`).join('')}</ol>
-  </div>` : ''}
 
-  <!-- 통계 -->
   <h2>📊 요약 통계</h2>
   <table>
     <tr><th style="width:30%">총 보도 건수</th><td>${total}건</td></tr>
@@ -318,11 +425,10 @@ export function renderReportHtml(report) {
         <div class="src">관련 보도 ${g.count}건 · ${esc((g.sources || []).slice(0, 8).join(', '))}</div>
       </div>`).join('')}` : ''}
 
-  <!-- 목차 -->
   <h2>📑 목차 (기사 ${total}건)</h2>
   <div class="toc"><ol>${tocItems}</ol></div>
 
-  <!-- 본문 -->
+  <!-- 기사 원문형 카드 섹션 -->
   ${bodySections}
 
   <!-- 부록 -->
@@ -382,6 +488,7 @@ export function renderReportText(report) {
   articles.slice(0, 30).forEach((a, i) => {
     lines.push(`[${i + 1}] [${a.source || '미상'}] ${a.date || ''}  (${a.mediaType || ''}, ${a.sentiment?.label || ''}, ${a.priority || ''})`);
     lines.push(`    ${a.title || ''}`);
+    if (a.briefLine) lines.push(`    📝 ${a.briefLine}`);
     if (a.url) lines.push(`    ${a.url}`);
     lines.push('');
   });
@@ -395,7 +502,7 @@ export function renderReportEmailHtml(report, baseUrl) {
     mediaCounts = {}, trending = [], riskLevel = { level: '안정', reasons: [] },
   } = report;
   const top = articles.slice(0, 10);
-  const previewLink = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/reports/${encodeURIComponent(report.id)}/pdf/preview`  : '';
+  const previewLink  = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/reports/${encodeURIComponent(report.id)}/pdf/preview`  : '';
   const downloadLink = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/reports/${encodeURIComponent(report.id)}/pdf/download` : '';
 
   const sentLine = sentiment.total
@@ -432,6 +539,7 @@ export function renderReportEmailHtml(report, baseUrl) {
             ? `<a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer" style="color:#0d1117; text-decoration:none;"><b>${esc(a.title || '')}</b></a>`
             : `<b>${esc(a.title || '')}</b>`}</div>
         <div style="color:#666; font-size: 12px;">[${esc(a.source || '')}] ${esc(a.date || '')} · #${esc(a.keyword || '')} · ${esc(a.mediaType || '')} · ${esc(a.sentiment?.label || '')} · ${esc(a.priority || '')}</div>
+        ${a.briefLine ? `<div style="color:#0d1117; font-size:12px; margin-top:3px;">📝 ${esc(a.briefLine)}</div>` : ''}
       </li>`).join('')}
   </ol>
   <hr/>

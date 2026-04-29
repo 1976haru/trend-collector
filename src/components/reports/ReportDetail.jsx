@@ -4,8 +4,8 @@
 // 기사 본문은 토글로 펼치기/접기.
 // ─────────────────────────────────────────────
 
-import { useState } from 'react';
-import { reportPdfPreviewUrl, reportPdfDownloadUrl } from '../../services/api.js';
+import { useState, useMemo } from 'react';
+import { downloadReportPdf, previewReportPdf, reportHtmlDebugUrl } from '../../services/api.js';
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 
 function safeUrl(u = '') {
@@ -55,21 +55,35 @@ function PriorityBadge({ p }) {
   return <span style={{ ...S.prio, background: v.bg, color: v.fg }}>{v.icon} {p}</span>;
 }
 
-function ArticleItem({ idx, art }) {
-  const [open, setOpen] = useState(false);
+function ArticleItem({ idx, art, viewMode = 'paper' }) {
+  const [open, setOpen] = useState(viewMode === 'paper');     // 원문형은 기본 펼침
   const sentColor = art.sentiment?.label === '긍정' ? '#16a34a'
                   : art.sentiment?.label === '부정' ? '#dc2626' : '#888';
   const matched = art.sentiment?.matchedKeywords || { positive: [], negative: [] };
   const reasons = art.sentiment?.reasons || [];
   const depts = (art.departments || []).map(d => d.name).join(', ');
   return (
-    <li style={S.item}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <PriorityBadge p={art.priority || '참고'} />
-        <ExternalLink href={art.url} style={S.itemTitle}>
-          [{idx}] {art.title}
-        </ExternalLink>
-      </div>
+    <li style={viewMode === 'paper' ? { ...S.item, ...S.paperItem } : S.item}>
+      {viewMode === 'paper' ? (
+        // 원문형: 헤더 라인 (언론사 · 날짜 · 우선순위)
+        <div style={S.paperSrc}>
+          <span style={S.paperSrcName}>{art.source || '미상'}</span>
+          {art.mediaType && <span style={S.paperBadge}>{art.mediaType}</span>}
+          {art.sourceProvider && <span style={S.paperBadge}>{art.sourceProvider === 'naver' ? '🇰🇷 Naver' : '🌍 Google'}</span>}
+          <span style={S.spacer} />
+          <PriorityBadge p={art.priority || '참고'} />
+        </div>
+      ) : null}
+      {viewMode === 'paper' ? (
+        <div style={S.paperTitle}>[{idx}] {art.title}</div>
+      ) : (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <PriorityBadge p={art.priority || '참고'} />
+          <ExternalLink href={art.url} style={S.itemTitle}>
+            [{idx}] {art.title}
+          </ExternalLink>
+        </div>
+      )}
       <div style={S.itemMeta}>
         <span style={S.src}>[{art.source || '미상'}]</span>{' '}
         {art.date && <span>{art.date}</span>}
@@ -106,7 +120,10 @@ function ArticleItem({ idx, art }) {
           ) : null}
         </div>
       )}
-      {art.summary && <div style={S.itemSummary}>{art.summary}</div>}
+      {art.briefLine && (
+        <div style={S.briefLine}>📝 <strong>보고용 한 줄:</strong> {art.briefLine}</div>
+      )}
+      {viewMode === 'analytic' && art.summary && <div style={S.itemSummary}>{art.summary}</div>}
 
       <button style={S.toggleBtn} onClick={() => setOpen(o => !o)}>
         {open ? '▲ 본문 접기' : '▼ 본문 펼치기'}
@@ -143,15 +160,55 @@ function ArticleItem({ idx, art }) {
 }
 
 export default function ReportDetail({ report, onClose, onEmail, sending }) {
+  const [pdfBusy,   setPdfBusy]   = useState('');     // 'preview' | 'download' | ''
+  const [pdfError,  setPdfError]  = useState('');
+  const [pdfOk,     setPdfOk]     = useState('');
+  const [viewMode,  setViewMode]  = useState('paper');     // 'paper' | 'analytic'
+  const [negFirst,  setNegFirst]  = useState(true);
+
   if (!report) return null;
-  const a = report.articles || [];
+  const articlesRaw = report.articles || [];
   const sentiment   = report.sentiment   || {};
   const mediaCounts = report.mediaCounts || {};
   const trending    = report.trending    || [];
   const groups      = report.groups      || [];
   const summaryText = report.summaryText || '';
   const riskLevel   = report.riskLevel   || { level: '안정', reasons: [] };
-  const total       = a.length;
+  const total       = articlesRaw.length;
+
+  // 부정 우선 정렬
+  const a = useMemo(() => {
+    if (!negFirst) return articlesRaw;
+    const order = { 긴급: 0, 주의: 1, 참고: 2 };
+    const sentOrder = { '부정': 0, '중립': 1, '긍정': 2 };
+    return [...articlesRaw].sort((x, y) =>
+      (order[x.priority] ?? 3) - (order[y.priority] ?? 3) ||
+      (sentOrder[x.sentiment?.label] ?? 3) - (sentOrder[y.sentiment?.label] ?? 3)
+    );
+  }, [articlesRaw, negFirst]);
+
+  async function onPreview() {
+    setPdfBusy('preview'); setPdfError(''); setPdfOk('');
+    try {
+      const r = await previewReportPdf(report.id);
+      setPdfOk(`📄 미리보기 창 열림 (${r.filename})`);
+    } catch (e) {
+      setPdfError(e.message || String(e));
+    } finally {
+      setPdfBusy('');
+    }
+  }
+  async function onDownload() {
+    setPdfBusy('download'); setPdfError(''); setPdfOk('');
+    try {
+      const r = await downloadReportPdf(report.id);
+      setPdfOk(`💾 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
+    } catch (e) {
+      setPdfError(e.message || String(e));
+    } finally {
+      setPdfBusy('');
+    }
+  }
 
   const mediaEntries = Object.entries(mediaCounts).filter(([, v]) => v > 0);
   const mediaMax     = Math.max(1, ...mediaEntries.map(([, v]) => v));
@@ -162,15 +219,40 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
       <div style={S.actBar}>
         <button onClick={onClose} style={S.back}>← 목록</button>
         <div style={S.spacer} />
-        <ExternalLink href={reportPdfPreviewUrl(report.id)} style={S.linkBtn}>
-          🔍 PDF 미리보기
-        </ExternalLink>
-        <ExternalLink href={reportPdfDownloadUrl(report.id)} style={S.pdfBtn}>
-          📄 PDF 다운로드
-        </ExternalLink>
+        <button onClick={onPreview} disabled={!!pdfBusy} style={S.linkBtn}>
+          {pdfBusy === 'preview' ? '⏳ 생성 중…' : '🔍 PDF 미리보기'}
+        </button>
+        <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn}>
+          {pdfBusy === 'download' ? '⏳ 생성 중…' : '📄 PDF 다운로드'}
+        </button>
         <button onClick={() => onEmail(report.id)} style={S.mail} disabled={sending}>
           {sending ? '발송 중…' : '✉️ 메일'}
         </button>
+      </div>
+
+      {/* PDF 상태 메시지 */}
+      {pdfError && (
+        <div style={S.errBox}>
+          ⚠️ {pdfError}
+          <a href={reportHtmlDebugUrl(report.id)} target="_blank" rel="noopener noreferrer" style={S.debugLink}>
+            (HTML 디버그 보기 →)
+          </a>
+        </div>
+      )}
+      {pdfOk && <div style={S.okBox}>{pdfOk}</div>}
+
+      {/* 보기 모드 + 정렬 토글 */}
+      <div style={S.toolRow}>
+        <div style={S.viewToggle}>
+          {[{ v: 'paper', l: '📰 원문형' }, { v: 'analytic', l: '📊 분석형' }].map(o => (
+            <button key={o.v} onClick={() => setViewMode(o.v)}
+              style={{ ...S.viewBtn, ...(viewMode === o.v ? S.viewOn : {}) }}>{o.l}</button>
+          ))}
+        </div>
+        <label style={S.negToggle}>
+          <input type="checkbox" checked={negFirst} onChange={e => setNegFirst(e.target.checked)} />
+          <span>부정/긴급 우선 정렬</span>
+        </label>
       </div>
 
       {/* 헤더 */}
@@ -367,7 +449,7 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
       <div style={S.panel}>
         <div style={S.panelLabel}>📌 기사 전체 ({a.length}건) — 본문 펼치기 가능</div>
         <ol style={S.list}>
-          {a.map((art, i) => <ArticleItem key={art.id || i} idx={i + 1} art={art} />)}
+          {a.map((art, i) => <ArticleItem key={art.id || i} idx={i + 1} art={art} viewMode={viewMode} />)}
         </ol>
       </div>
     </div>
@@ -453,4 +535,31 @@ const S = {
   deptRow:     { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f0ede8', fontSize: 13 },
   deptName:    { color: '#0d1117' },
   deptCnt:     { color: '#555', fontWeight: 600 },
+
+  // PDF 상태
+  errBox:      { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030',
+                 padding: '10px 12px', borderRadius: 8, fontSize: 12.5, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
+  okBox:       { background: '#dcfce7', border: '1px solid #86efac', color: '#166534',
+                 padding: '8px 12px', borderRadius: 8, fontSize: 12.5 },
+  debugLink:   { color: '#0d1117', textDecoration: 'underline' },
+
+  // 보기 모드 / 정렬 토글
+  toolRow:     { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+                 background: 'white', borderRadius: 10, padding: '8px 12px', boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
+  viewToggle:  { display: 'flex', gap: 4, background: '#f0ede8', borderRadius: 8, padding: 3 },
+  viewBtn:     { padding: '6px 12px', minHeight: 36, borderRadius: 6, border: 'none', background: 'transparent', color: '#555',
+                 fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  viewOn:      { background: '#0d1117', color: 'white' },
+  negToggle:   { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#444', cursor: 'pointer' },
+
+  // 원문형 카드 변형
+  paperItem:   { padding: '14px 14px', borderRadius: 10, border: '1px solid #f0ede8', background: '#fafaf6' },
+  paperSrc:    { display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 6, borderBottom: '1px solid #d5d0c8',
+                 fontSize: 12, color: '#555' },
+  paperSrcName:{ fontWeight: 700, color: '#0d1117', fontSize: 13 },
+  paperBadge:  { padding: '1px 7px', borderRadius: 8, background: 'white', border: '1px solid #d5d0c8', fontSize: 10.5, color: '#666' },
+  paperTitle:  { fontFamily: "'Noto Serif KR','Noto Sans KR',serif", fontSize: 17, fontWeight: 700,
+                 color: '#0d1117', lineHeight: 1.4, margin: '8px 0 4px' },
+  briefLine:   { background: '#f8f6f2', borderLeft: '2px solid #0d1117',
+                 padding: '6px 11px', margin: '8px 0', fontSize: 12.5, lineHeight: 1.6 },
 };
