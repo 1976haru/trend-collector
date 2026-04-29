@@ -5,10 +5,10 @@
 import { useEffect, useState } from 'react';
 import { fmtNow, fmtFull, fmtUntil } from '../../utils/datetime.js';
 
-export default function Header({ schedule }) {
+export default function Header({ schedule, onFeedback }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000 * 30); // 30초마다 갱신 (분 단위 표시)
+    const t = setInterval(() => setNow(new Date()), 1000 * 30);
     return () => clearInterval(t);
   }, []);
 
@@ -20,7 +20,7 @@ export default function Header({ schedule }) {
         <span style={S.logo}>📰</span>
         <div>
           <div style={S.title}>Trend Collector</div>
-          <div style={S.sub}>전국 언론보도 자동 수집</div>
+          <div style={S.sub}>법무부 언론보도 모니터링</div>
         </div>
       </div>
       <div style={S.right}>
@@ -36,6 +36,11 @@ export default function Header({ schedule }) {
             <span style={{ ...S.dot, background: '#94a3b8' }} />
             자동 수집 OFF
           </div>
+        )}
+        {onFeedback && (
+          <button onClick={onFeedback} style={S.feedback} title="기능 개선 제안하기">
+            💡 기능 개선 제안하기
+          </button>
         )}
       </div>
     </header>
@@ -56,4 +61,9 @@ const S = {
   next:  { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#cbd5e1', whiteSpace: 'nowrap' },
   dot:   { width: 8, height: 8, borderRadius: '50%' },
   until: { color: '#94a3b8' },
+  feedback: {
+    padding: '6px 11px', minHeight: 32, borderRadius: 7, border: '1px solid rgba(255,255,255,.3)',
+    background: 'rgba(255,255,255,.08)', color: 'white', fontSize: 11.5, fontWeight: 600,
+    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+  },
 };

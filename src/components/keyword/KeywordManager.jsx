@@ -1,26 +1,27 @@
 // ─────────────────────────────────────────────
-// KeywordManager.jsx — 키워드 / 제외 / 즉시 수집 + 자동 수집 설정 (인라인)
+// KeywordManager.jsx — 법무부 빠른 키워드(카테고리) + 기간 선택 + 즉시 수집 + 자동 수집 설정
 // ─────────────────────────────────────────────
 
 import { useState } from 'react';
-import { PRESET_KEYWORDS } from '../../constants/config.js';
-import ScheduleSettings    from '../schedule/ScheduleSettings.jsx';
+import { PRESET_CATEGORIES, PERIOD_OPTIONS } from '../../constants/config.js';
+import ScheduleSettings from '../schedule/ScheduleSettings.jsx';
 
 export default function KeywordManager({
-  // 키워드 / 제외
   keywords = [], excludeKeywords = [], filterAds = true, requireAllInclude = false,
   onAdd, onRemove, onAddExclude, onRemoveExclude,
   onToggleFilterAds, onToggleRequireAll,
-  // 수집
   onCollect, loading = false,
-  // 인라인 스케줄용
   config, health, onUpdateConfig,
 }) {
   const [input,    setInput]    = useState('');
   const [excInput, setExcInput] = useState('');
+  // 카테고리 접기/펼치기 상태 — 기본 첫 번째만 펼침
+  const [open, setOpen] = useState({ core: true });
 
   function addKw()      { const k = input.trim();    if (k) { onAdd(k); setInput(''); } }
   function addExclude() { const k = excInput.trim(); if (k && onAddExclude) { onAddExclude(k); setExcInput(''); } }
+
+  const period = config?.collectPeriod || '7d';
 
   return (
     <div>
@@ -45,16 +46,30 @@ export default function KeywordManager({
           </div>
         )}
 
-        <div style={S.label2}>📌 빠른 추가</div>
-        <div style={S.presetWrap}>
-          {PRESET_KEYWORDS.map(k => (
-            <button key={k}
-              style={{ ...S.chip, ...(keywords.includes(k) ? S.chipOn : {}) }}
-              onClick={() => keywords.includes(k) ? onRemove(k) : onAdd(k)}>
-              {keywords.includes(k) ? '✓ ' : ''}{k}
-            </button>
-          ))}
-        </div>
+        {/* 법무부 빠른 키워드 — 카테고리 접기/펼치기 */}
+        <div style={S.label2}>📌 법무부 빠른 키워드</div>
+        {PRESET_CATEGORIES.map(cat => {
+          const expanded = !!open[cat.id];
+          return (
+            <div key={cat.id} style={S.catBox}>
+              <button style={S.catHead} onClick={() => setOpen(o => ({ ...o, [cat.id]: !o[cat.id] }))}>
+                <span>{expanded ? '▾' : '▸'} {cat.name}</span>
+                <span style={S.catCount}>{cat.keywords.length}개</span>
+              </button>
+              {expanded && (
+                <div style={S.presetWrap}>
+                  {cat.keywords.map(k => (
+                    <button key={k}
+                      style={{ ...S.chip, ...(keywords.includes(k) ? S.chipOn : {}) }}
+                      onClick={() => keywords.includes(k) ? onRemove(k) : onAdd(k)}>
+                      {keywords.includes(k) ? '✓ ' : ''}{k}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         {onToggleRequireAll && (
           <label style={S.toggle}>
@@ -93,10 +108,45 @@ export default function KeywordManager({
         )}
       </div>
 
+      {/* 수집 기간 */}
+      {config && (
+        <div style={S.panel}>
+          <div style={S.label}>📆 수집 기간</div>
+          <div style={S.periodRow}>
+            {PERIOD_OPTIONS.map(o => (
+              <button key={o.v}
+                style={{ ...S.periodBtn, ...(period === o.v ? S.periodOn : {}) }}
+                onClick={() => onUpdateConfig({ collectPeriod: o.v })}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+          {period === 'custom' && (
+            <div style={S.dateRow}>
+              <label style={S.dateLabel}>시작
+                <input type="date" style={S.dateInp}
+                  value={config.collectFromDate || ''}
+                  onChange={e => onUpdateConfig({ collectFromDate: e.target.value })} />
+              </label>
+              <label style={S.dateLabel}>종료
+                <input type="date" style={S.dateInp}
+                  value={config.collectToDate || ''}
+                  onChange={e => onUpdateConfig({ collectToDate: e.target.value })} />
+              </label>
+            </div>
+          )}
+          <label style={{ ...S.toggle, marginTop: 6 }}>
+            <input type="checkbox" checked={config.includeImages !== false}
+              onChange={e => onUpdateConfig({ includeImages: e.target.checked })} />
+            <span>PDF 에 본문 이미지 포함</span>
+          </label>
+        </div>
+      )}
+
       {/* 즉시 수집 — 강조 */}
       <button style={S.collect} onClick={onCollect}
         disabled={loading || keywords.length === 0}>
-        {loading ? '⏳ 수집 + 본문 추출 중... (10~30초 소요)'
+        {loading ? '⏳ 수집 + 본문/이미지 추출 중... (15~30초 소요)'
                  : keywords.length === 0 ? '키워드를 먼저 추가하세요'
                                          : '🔍 지금 즉시 수집'}
       </button>
@@ -122,11 +172,26 @@ const S = {
   tagWrap:  { display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 },
   tag:      { display: 'flex', alignItems: 'center', gap: 4, background: '#0d1117', color: 'white', borderRadius: 20, padding: '4px 11px', fontSize: 12.5 },
   rm:       { background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, padding: 0, minWidth: 18, minHeight: 18 },
-  presetWrap: { display: 'flex', flexWrap: 'wrap', gap: 4 },
-  chip:     { padding: '5px 11px', minHeight: 32, borderRadius: 20, border: '1.5px solid #d5d0c8', background: '#f8f6f2', fontSize: 11.5, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
+
+  catBox:   { borderRadius: 8, border: '1px solid #f0ede8', marginBottom: 6, overflow: 'hidden', background: '#fafaf8' },
+  catHead:  { width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '8px 11px', minHeight: 38, background: 'transparent', border: 'none', cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#333' },
+  catCount: { fontSize: 11, color: '#888' },
+  presetWrap:{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '4px 10px 11px' },
+  chip:     { padding: '5px 11px', minHeight: 32, borderRadius: 20, border: '1.5px solid #d5d0c8', background: 'white', fontSize: 11.5, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
   chipOn:   { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
+
   toggle:   { display: 'flex', alignItems: 'center', gap: 7, marginTop: 12, fontSize: 12.5, color: '#444', cursor: 'pointer', minHeight: 32 },
   btnDark:  { padding: '10px 14px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: '#0d1117', color: 'white', fontFamily: 'inherit', minHeight: 44 },
+
+  periodRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  periodBtn: { padding: '8px 12px', minHeight: 38, borderRadius: 8, border: '2px solid #e5e0d8', background: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
+  periodOn:  { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
+  dateRow:   { display: 'flex', gap: 12, marginTop: 10, flexWrap: 'wrap' },
+  dateLabel: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#444' },
+  dateInp:   { padding: '8px 10px', border: '1.5px solid #e5e0d8', borderRadius: 7, outline: 'none', fontSize: 13, fontFamily: 'inherit' },
+
   collect:  { width: '100%', minHeight: 56, padding: 16, borderRadius: 12, border: 'none',
               background: 'linear-gradient(180deg, #0d1117 0%, #1f2937 100%)',
               color: 'white', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',

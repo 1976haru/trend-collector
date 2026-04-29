@@ -10,6 +10,7 @@ import { loadConfig, listReports, loadReport, saveReport } from './store.js';
 import { classifyMedia, countByMediaType, MEDIA_TYPES } from './mediaList.js';
 import { analyzeSentiments } from './sentiment.js';
 import { extractMany } from './articleExtractor.js';
+import { suggestDepartments, countDepartments } from './departments.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -86,6 +87,55 @@ function safeDate(raw) {
       hour: '2-digit', minute: '2-digit',
     });
   } catch { return raw; }
+}
+
+// 수집 기간 계산
+function resolvePeriod(cfg) {
+  const now = Date.now();
+  const day = 24 * 3600 * 1000;
+  if (cfg.collectPeriod === 'custom' && cfg.collectFromDate) {
+    const fromTs = new Date(cfg.collectFromDate + 'T00:00:00').getTime();
+    const toTs   = cfg.collectToDate
+      ? new Date(cfg.collectToDate + 'T23:59:59').getTime()
+      : now;
+    return { from: fromTs, to: toTs, label: 'custom' };
+  }
+  const map = { '24h': 1, '3d': 3, '7d': 7, '14d': 14, '30d': 30 };
+  const days = map[cfg.collectPeriod] ?? 7;
+  return { from: now - days * day, to: now, label: cfg.collectPeriod || '7d' };
+}
+
+// pubDate 파싱 시도 (기사의 rawDate)
+function parsePubDate(raw) {
+  if (!raw) return null;
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+// 기간 필터 (수집 후 적용)
+function applyPeriodFilter(articles, period) {
+  let kept = [], outOfRange = 0, parseFailed = 0;
+  for (const a of articles) {
+    const t = parsePubDate(a.rawDate);
+    if (t === null) { parseFailed++; continue; }
+    if (t < period.from || t > period.to) { outOfRange++; continue; }
+    kept.push(a);
+  }
+  return { kept, outOfRange, parseFailed };
+}
+
+// 우선순위 계산 — 부서 / 매체 / 감정 / 부정 키워드로 라벨링
+function computePriority(article) {
+  const sent = article.sentiment?.label;
+  const isCentral = article.mediaType === '중앙언론' || article.mediaType === '방송사';
+  const isGov     = article.mediaType === '정부/공공기관';
+  const negCount  = article.sentiment?.matchedKeywords?.negative?.length || 0;
+
+  // 긴급: 중앙·방송 + 부정 키워드 다수
+  if ((isCentral && sent === '부정' && negCount >= 2) || negCount >= 4) return '긴급';
+  // 주의: 부정 또는 중앙·방송 보도
+  if (sent === '부정' || isCentral || isGov) return '주의';
+  return '참고';
 }
 
 function normalize(s = '') {
@@ -251,12 +301,17 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     }
   }
 
+  // 0) 수집 기간 필터 (publishedAt 기준)
+  const period = resolvePeriod(cfg);
+  const filtered = applyPeriodFilter(all, period);
+  let processed = filtered.kept;
+
   // 1) 중복 / 광고 / 제외
-  let processed = dedupe(all);
+  processed = dedupe(processed);
   if (cfg.filterAds) processed = applyAdFilter(processed);
   processed = applyExcludes(processed, cfg.excludes);
 
-  // 1.5) PDF 부담을 줄이기 위해 최대 30건으로 제한 (정책 시 — 본문 추출 비용 큼)
+  // 1.5) 최대 30건
   if (processed.length > 30) processed = processed.slice(0, 30);
 
   // 2) 각 기사에 mediaType 부여
@@ -299,14 +354,42 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   // 6) 위험 등급 — 부정 비율과 급상승 유무로 결정
   const riskLevel = computeRiskLevel(sentiment, trending);
 
-  // 7) 본문 추출 통계
+  // 7) 부서 추천 + 우선순위 (각 기사)
+  for (const a of processed) {
+    a.departments = suggestDepartments(a);
+    a.priority    = computePriority(a);
+  }
+
+  // 7.5) 본문 추출 통계
   const extractedCount = processed.filter(a => a.extracted).length;
   const extractionFailed = processed
     .filter(a => !a.extracted)
     .map(a => ({ id: a.id, title: a.title, url: a.url, error: a.extractionError }));
 
+  // 7.7) 부서별 집계 + TOP 부정 / 긍정 / 중립 이슈
+  const departmentCounts = countDepartments(processed);
+  const sortByPriority = (arr) => arr.sort((a, b) => {
+    const order = { 긴급: 0, 주의: 1, 참고: 2 };
+    return (order[a.priority] || 3) - (order[b.priority] || 3);
+  });
+  const negativeIssues = sortByPriority(processed.filter(a => a.sentiment?.label === '부정')).slice(0, 5);
+  const positiveIssues = processed.filter(a => a.sentiment?.label === '긍정').slice(0, 5);
+  const neutralIssues  = processed.filter(a => a.sentiment?.label === '중립').slice(0, 5);
+  const actionRequired = processed.filter(a => a.priority === '긴급' || a.priority === '주의');
+
+  // 자동 보고서 제목
+  const today = new Date().toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'long', day: 'numeric' });
+  const reportTitle = `${today} 법무부 언론보도 모니터링 일일보고`;
+
+  // 보고서 문장 (총평 / 주요 동향 / 대응)
+  const briefingText = buildBriefing({
+    articles: processed, keywords: cfg.keywords,
+    sentiment, mediaCounts, departmentCounts, trending, actionRequired,
+  });
+
   const report = {
     id:          newId(),
+    title:       reportTitle,
     generatedAt: new Date().toISOString(),
     keywords:    cfg.keywords,
     excludes:    cfg.excludes || [],
@@ -315,21 +398,81 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     articles:    processed,
     errors,
 
+    // 수집 기간
+    period: {
+      label:      period.label,
+      from:       new Date(period.from).toISOString(),
+      to:         new Date(period.to).toISOString(),
+      outOfRange: filtered.outOfRange,
+      parseFailed: filtered.parseFailed,
+    },
+
     // 분석
     mediaTypes:    MEDIA_TYPES,
     mediaCounts,
     keywordCounts,
+    departmentCounts,
     sentiment,
     trending,
     groups,
-    summaryText,
-    riskLevel,                             // { level: '안정'|'주의'|'긴급', reasons:[] }
+    summaryText,                          // 기존 요약 (한문장)
+    briefingText,                         // 신규 — 총평/주요동향/대응
+    riskLevel,
     extractedCount,
     extractionFailed,
+
+    // 분류된 이슈
+    negativeIssues, positiveIssues, neutralIssues, actionRequired,
   };
 
   await saveReport(report);
   return report;
+}
+
+// ── 법무부 업무용 보고서 문장 (총평 / 주요 동향 / 대응) ─────
+function buildBriefing({ articles, keywords, sentiment, mediaCounts, departmentCounts, trending, actionRequired }) {
+  const total = articles.length;
+  if (!total) return { 총평: '오늘은 수집된 보도가 없습니다.', 주요보도동향: '', 대응필요이슈: '', 관련부서참고사항: '' };
+
+  const topKw     = topN(countByKeyword(articles), 3);
+  const topDept   = topN(departmentCounts, 3);
+  const topMedia  = topN(mediaCounts, 3).filter(([k]) => k !== '기타');
+  const topIssues = topN(articles.reduce((m, a) => {
+    const t = a.sentiment?.issueType;
+    if (t) m[t] = (m[t] || 0) + 1;
+    return m;
+  }, {}), 3);
+
+  const 총평 = `금일 ${keywords.join('·')} 관련 언론보도는 총 ${total}건으로 확인되었습니다. ` +
+    `긍정 ${sentiment.positive}건(${sentiment.positivePct}%) / 부정 ${sentiment.negative}건(${sentiment.negativePct}%) / 중립 ${sentiment.neutral}건(${sentiment.neutralPct}%) 으로 집계되었으며, 전반 분위기는 ${sentiment.overall} 입니다.`;
+
+  const issuesPart = topIssues.length
+    ? `주요 보도 분야는 ${topIssues.map(([k, v]) => `${k}(${v}건)`).join(', ')} 사안입니다.`
+    : '특별한 분야 집중도는 관측되지 않았습니다.';
+  const mediaPart = topMedia.length
+    ? `주된 보도 매체는 ${topMedia.map(([k, v]) => `${k}(${v})`).join(', ')} 입니다.`
+    : '';
+  const trendPart = trending.length
+    ? `급상승 키워드: ${trending.slice(0, 3).map(t => `${t.keyword}(${t.prev}→${t.curr})`).join(', ')}.`
+    : '';
+  const 주요보도동향 = [issuesPart, mediaPart, trendPart].filter(Boolean).join(' ');
+
+  let 대응필요이슈 = '';
+  if (actionRequired.length === 0) {
+    대응필요이슈 = '대응이 필요한 이슈는 식별되지 않았습니다. 일상 모니터링으로 충분합니다.';
+  } else {
+    const urgent = actionRequired.filter(a => a.priority === '긴급').length;
+    const watch  = actionRequired.filter(a => a.priority === '주의').length;
+    const negKw = [...new Set(actionRequired.flatMap(a => a.sentiment?.matchedKeywords?.negative || []))].slice(0, 6);
+    대응필요이슈 = `대응 필요 이슈 ${actionRequired.length}건이 식별되었습니다 (긴급 ${urgent}건 / 주의 ${watch}건). ` +
+      (negKw.length ? `반복 확인된 부정 키워드: ${negKw.join(', ')}. 관계 부서의 모니터링이 필요합니다.` : '');
+  }
+
+  const 관련부서참고사항 = topDept.length
+    ? `관련 부서별 보도량: ${topDept.map(([k, v]) => `${k} ${v}건`).join(', ')}.`
+    : '부서 추천 결과 없음.';
+
+  return { 총평, 주요보도동향, 대응필요이슈, 관련부서참고사항 };
 }
 
 // ── 위험 등급 산출 ──────────────────────────────

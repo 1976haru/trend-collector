@@ -59,6 +59,82 @@ app.get('/api/health', async (_req, res) => {
 // ── 인증 ─────────────────────────────────────
 app.use('/api/auth', authRouter);
 
+// ── 무인증 — 기능 개선 제안 ──────────────────
+// (보호된 라우터(api) 보다 먼저 등록해야 한다)
+app.post('/api/feedback', async (req, res) => {
+  if (!smtpConfigured()) {
+    return res.status(503).json({
+      ok: false,
+      error: '메일 발송이 설정되지 않았습니다. 관리자에게 SMTP 설정을 요청하세요.',
+    });
+  }
+  const to = process.env.FEEDBACK_TO_EMAIL;
+  if (!to) {
+    return res.status(503).json({
+      ok: false,
+      error: 'FEEDBACK_TO_EMAIL 환경변수가 설정되지 않았습니다.',
+    });
+  }
+  const b = req.body || {};
+  for (const k of ['title', 'content']) {
+    if (!b[k] || String(b[k]).trim().length === 0) {
+      return res.status(400).json({ ok: false, error: `${k} 는 필수입니다.` });
+    }
+  }
+  const trim = (v, n) => String(v || '').trim().slice(0, n);
+  const data = {
+    name:       trim(b.name, 80),
+    contact:    trim(b.contact, 200),
+    title:      trim(b.title, 200),
+    content:    trim(b.content, 5000),
+    severity:   ['낮음', '보통', '높음', '긴급'].includes(b.severity) ? b.severity : '보통',
+    userAgent:  trim(req.get('user-agent'), 300),
+    pageUrl:    trim(b.pageUrl, 500),
+    receivedAt: new Date().toISOString(),
+  };
+  const subject = `[Trend Collector 기능개선 제안] ${data.title}`;
+  const text = [
+    `▶ 접수 시간: ${new Date(data.receivedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`,
+    `▶ 이름/부서: ${data.name || '-'}`,
+    `▶ 연락처:   ${data.contact || '-'}`,
+    `▶ 중요도:   ${data.severity}`,
+    `▶ 제안 제목: ${data.title}`,
+    '',
+    '── 제안 내용 ─────────────────────────',
+    data.content,
+    '──────────────────────────────────────',
+    '',
+    `브라우저: ${data.userAgent}`,
+    `현재 URL: ${data.pageUrl}`,
+  ].join('\n');
+  const escHtml = (s) => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const html = `
+    <div style="font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif; line-height:1.6; color:#222;">
+      <h2 style="margin:0 0 8px;">📨 Trend Collector 기능개선 제안</h2>
+      <table style="border-collapse:collapse; font-size:13px; margin:8px 0;">
+        <tr><th align="left" style="padding:4px 10px; background:#f0ede8;">접수 시간</th><td style="padding:4px 10px;">${new Date(data.receivedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}</td></tr>
+        <tr><th align="left" style="padding:4px 10px; background:#f0ede8;">이름/부서</th><td style="padding:4px 10px;">${escHtml(data.name) || '-'}</td></tr>
+        <tr><th align="left" style="padding:4px 10px; background:#f0ede8;">연락처</th><td style="padding:4px 10px;">${escHtml(data.contact) || '-'}</td></tr>
+        <tr><th align="left" style="padding:4px 10px; background:#f0ede8;">중요도</th><td style="padding:4px 10px;"><strong>${escHtml(data.severity)}</strong></td></tr>
+        <tr><th align="left" style="padding:4px 10px; background:#f0ede8;">제목</th><td style="padding:4px 10px;">${escHtml(data.title)}</td></tr>
+      </table>
+      <h3 style="margin:14px 0 4px;">제안 내용</h3>
+      <div style="background:#fafaf6; border:1px solid #ccc; border-radius:6px; padding:12px; white-space:pre-wrap;">${escHtml(data.content)}</div>
+      <div style="margin-top:14px; color:#666; font-size:12px;">
+        브라우저: ${escHtml(data.userAgent)}<br/>
+        현재 URL: ${escHtml(data.pageUrl) || '-'}
+      </div>
+    </div>
+  `;
+  try {
+    await sendMail({ to, subject, text, html });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[feedback] send error:', e.message);
+    res.status(500).json({ ok: false, error: '메일 발송에 실패했습니다. 관리자에게 문의하세요.' });
+  }
+});
+
 // ── 보호된 API ───────────────────────────────
 const api = express.Router();
 api.use(requireAuth);
@@ -189,21 +265,49 @@ app.get('/api/reports/:id/html', requireAuth, async (req, res) => {
   }
 });
 
-// ── 리포트 PDF 다운로드 (Puppeteer 서버 생성) ──
-app.get('/api/reports/:id/pdf', requireAuth, async (req, res) => {
+// ── 공통: 리포트 ID 로 PDF 버퍼 생성 ───────────
+async function generatePdfFor(id) {
+  const report  = await loadReport(id);
+  const buf     = await htmlToPdf(renderReportHtml(report));
+  const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
+  return { buf, fileName: `trend-report-${dateStr}.pdf` };
+}
+
+// ── 리포트 PDF — 미리보기 (inline) ──────────────
+app.get('/api/reports/:id/pdf/preview', requireAuth, async (req, res) => {
   try {
-    const report = await loadReport(req.params.id);
-    const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
-    const fileName = `trend-report-${dateStr}.pdf`;
-    const pdf = await htmlToPdf(renderReportHtml(report));
+    const { buf, fileName } = await generatePdfFor(req.params.id);
+    res.set('Content-Type',        'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control',       'no-store');
+    res.send(buf);
+  } catch (e) {
+    console.error('[pdf:preview] generation error:', e.stack || e.message);
+    res.status(500).type('text/html; charset=utf-8').send(
+      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 미리보기 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}</pre>`
+    );
+  }
+});
+
+// ── 리포트 PDF — 다운로드 (attachment) ──────────
+app.get('/api/reports/:id/pdf/download', requireAuth, async (req, res) => {
+  try {
+    const { buf, fileName } = await generatePdfFor(req.params.id);
     res.set('Content-Type',        'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.set('Cache-Control',       'no-store');
-    res.send(Buffer.from(pdf));
+    res.send(buf);
   } catch (e) {
-    console.error('[pdf] generation error:', e.message);
-    res.status(500).send('PDF 생성 실패: ' + e.message);
+    console.error('[pdf:download] generation error:', e.stack || e.message);
+    res.status(500).type('text/html; charset=utf-8').send(
+      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 다운로드 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}</pre>`
+    );
   }
+});
+
+// ── 호환 — 기존 /pdf 는 download 로 ─────────────
+app.get('/api/reports/:id/pdf', requireAuth, (req, res) => {
+  res.redirect(302, `/api/reports/${encodeURIComponent(req.params.id)}/pdf/download`);
 });
 
 // ── SPA 정적 서빙 ────────────────────────────

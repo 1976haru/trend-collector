@@ -45,11 +45,16 @@ export const getReport   = (id)     => request('GET',  `/api/reports/${encodeURI
 export function reportHtmlUrl(id) {
   return `/api/reports/${encodeURIComponent(id)}/html`;
 }
-
-export function reportPdfUrl(id) {
-  return `/api/reports/${encodeURIComponent(id)}/pdf`;
-}
+export function reportPdfPreviewUrl(id)  { return `/api/reports/${encodeURIComponent(id)}/pdf/preview`; }
+export function reportPdfDownloadUrl(id) { return `/api/reports/${encodeURIComponent(id)}/pdf/download`; }
+// 호환 alias
+export function reportPdfUrl(id) { return reportPdfDownloadUrl(id); }
 
 export function emailReport(id, body = {}) {
   return request('POST', `/api/reports/${encodeURIComponent(id)}/email`, body);
+}
+
+// 기능 개선 제안 (인증 무관)
+export function submitFeedback(payload) {
+  return request('POST', '/api/feedback', payload);
 }

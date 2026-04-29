@@ -96,8 +96,81 @@ function cleanText(s = '') {
   return String(s).replace(/\s+/g, ' ').trim();
 }
 
+// 절대 URL 변환
+function absUrl(u, base) {
+  if (!u) return '';
+  try { return new URL(u, base).toString(); } catch { return u; }
+}
+
+// 메타 / 추가 메타데이터 추출 (제거 전에 수집)
+function extractMeta($, base) {
+  const meta = (sel) => $(sel).attr('content') || '';
+  const ogImage  = meta('meta[property="og:image"]')        || meta('meta[name="og:image"]')        || meta('meta[property="og:image:url"]');
+  const ogTitle  = meta('meta[property="og:title"]');
+  const ogDesc   = meta('meta[property="og:description"]')  || meta('meta[name="description"]');
+  const author   = meta('meta[name="author"]')              || meta('meta[property="article:author"]');
+  const published = meta('meta[property="article:published_time"]') || meta('meta[name="pubdate"]');
+
+  // 기자명 휴리스틱 (한국 매체 흔한 패턴)
+  let reporter = author;
+  if (!reporter) {
+    const candidates = [
+      '.byline', '.reporter', '[class*="reporter"]', '[class*="byline"]',
+      '.author', '[class*="author"]',
+    ];
+    for (const sel of candidates) {
+      const t = $(sel).first().text().trim();
+      if (t && t.length < 60) { reporter = t; break; }
+    }
+  }
+
+  return {
+    leadImage: absUrl(ogImage, base),
+    metaTitle: ogTitle,
+    metaDesc:  ogDesc,
+    reporter:  reporter ? reporter.replace(/\s+/g, ' ').replace(/^by\s+/i, '').trim() : '',
+    publishedMeta: published,
+  };
+}
+
+// 본문 영역 안의 이미지 추출 (최대 3개, 본문 외 광고는 제외)
+function extractInlineImages(node, $, base, max = 3) {
+  const imgs = [];
+  node.find('img').each((_, el) => {
+    if (imgs.length >= max) return false;
+    const $img = $(el);
+    const src = $img.attr('src') || $img.attr('data-src') || $img.attr('data-original') || $img.attr('data-lazy-src');
+    if (!src) return;
+    if (/^data:/i.test(src)) return;                       // 인라인 base64 제외
+    const url = absUrl(src, base);
+    if (!/^https?:\/\//i.test(url)) return;
+    // 트래킹 픽셀 등 작은 이미지 제외
+    const w = Number($img.attr('width') || 0);
+    const h = Number($img.attr('height') || 0);
+    if (w && w < 80) return;
+    if (h && h < 60) return;
+
+    let caption = '';
+    const $fig = $img.closest('figure');
+    if ($fig.length) {
+      caption = $fig.find('figcaption').first().text().trim();
+    }
+    if (!caption) {
+      const $next = $img.next();
+      if ($next.length && /caption|cap|figcaption/i.test($next.attr('class') || '')) {
+        caption = $next.text().trim();
+      }
+    }
+    imgs.push({ url, caption: caption.slice(0, 200) });
+  });
+  return imgs;
+}
+
 function extractFromHtml(html, base = '') {
   const $ = cheerio.load(html, { decodeEntities: true });
+
+  // 메타데이터 (노이즈 제거 전에 수집)
+  const meta = extractMeta($, base);
 
   // 노이즈 제거
   for (const sel of NOISE_SELECTORS) $(sel).remove();
@@ -132,7 +205,20 @@ function extractFromHtml(html, base = '') {
   }
 
   if (!bestNode || bestScore < 100) {
-    return { contentText: '', contentHtml: '', extracted: false, reason: 'no-body-candidate' };
+    return {
+      contentText: '', contentHtml: '', extracted: false, reason: 'no-body-candidate',
+      leadImage: meta.leadImage, reporter: meta.reporter, publishedMeta: meta.publishedMeta,
+      images: meta.leadImage ? [{ url: meta.leadImage, caption: '' }] : [],
+    };
+  }
+
+  // 본문 영역 이미지 (최대 3개)
+  const inlineImages = extractInlineImages(bestNode, $, base);
+  const allImages = [];
+  if (meta.leadImage) allImages.push({ url: meta.leadImage, caption: '' });
+  for (const img of inlineImages) {
+    if (!allImages.some(x => x.url === img.url)) allImages.push(img);
+    if (allImages.length >= 3) break;
   }
 
   // 본문 텍스트 — <p>/<br> 줄바꿈 보존
@@ -165,7 +251,11 @@ function extractFromHtml(html, base = '') {
   let html2 = bestNode.html() || '';
   if (html2.length > MAX_BODY_LEN * 1.5) html2 = html2.slice(0, MAX_BODY_LEN * 1.5) + '…';
 
-  return { contentText: text, contentHtml: html2, extracted: true, reason: '' };
+  return {
+    contentText: text, contentHtml: html2, extracted: true, reason: '',
+    leadImage: meta.leadImage, reporter: meta.reporter, publishedMeta: meta.publishedMeta,
+    images: allImages,
+  };
 }
 
 // Google News 의 인코딩된 URL 인지 여부.

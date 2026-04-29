@@ -1,7 +1,7 @@
-# 📰 Trend Collector — 공공기관 내부 업무용 기사 전문 PDF 리포트 시스템
+# 📰 Trend Collector — 법무부 언론보도 모니터링 시스템
 
-> 키워드 기반 전국 언론보도를 자동 수집하고, **각 기사 본문 전체를 추출**하여 **30건 전문이 포함된 PDF 보고서**를 자동 생성·발송하는 내부 업무용 도구.
-> 단일 비밀번호 로그인 / 외부 공개·재배포 금지 (공공기관 내부 업무용) / Render 단일 서비스 배포 / PWA 지원.
+> 법무부 핵심·기관·정책 키워드 기반으로 언론보도를 자동 수집하고, **각 기사 본문·이미지 + 감정 분석 근거**를 포함한 **30건 전문 PDF 보고서**를 자동 생성·발송하는 내부 업무용 도구.
+> 단일 비밀번호 로그인 / 외부 공개·재배포 금지 / Render 단일 서비스 배포 / PWA 지원.
 
 ---
 
@@ -10,14 +10,18 @@
 | 분류 | 내용 |
 |------|------|
 | 🔐 인증 | `ADMIN_PASSWORD` 단일 비밀번호 + HMAC 서명 쿠키 (7일 세션) |
-| 🏷 키워드 | 검색·제외 키워드, AND 검색, 광고 자동 필터 — 모든 직원 공유 |
-| ⏰ 자동 수집 | **즉시 / 6·10·12·24·48시간 / 매일 특정 시각 / OFF**, 설정 변경 시 cron 자동 재기동 |
-| 📰 본문 추출 | URL 에서 `cheerio` 로 본문 추출 (병렬 5, 타임아웃 8s) — RSS description fallback |
-| 📊 분석 | 언론 유형(중앙/지방/방송/인터넷/정부·공공기관), 감정(긍/부/중립), 급상승 키워드(+200% / +10건), 중복 기사 묶기, 자동 요약 문장, **위험 등급(안정/주의/긴급)** |
-| 📄 **PDF 보고서** | **Puppeteer 서버 생성** — 표지 / 요약 / 목차 / 기사 30건 전문 / 부록. Noto Sans KR 임베드. `GET /api/reports/:id/pdf` 자동 다운로드 (`trend-report-YYYYMMDDHHmm.pdf`) |
-| 📧 메일 | nodemailer SMTP — 본문 HTML + **PDF 첨부 옵션** + 알림 트리거 시 ⚠️ 제목 |
-| 💬 카카오 | 구조 제공 + `KAKAO_ENABLED=true` 토글 (기본 OFF, 실 발송은 P2) |
-| 📱 PWA | manifest.json + 192/512 아이콘, 안전영역, 모바일 반응형, 본문 접기/펼치기 |
+| 🏷 **법무부 키워드** | 핵심 / 기관·업무 / 정책·이슈 3개 카테고리, 카테고리별 접기/펼치기 |
+| 📆 **수집 기간** | 24시간 / 3·7·14·30일 / 직접 설정 — `publishedAt` 기준 필터링, 기간 외·파싱 실패 카운트 |
+| ⏰ 자동 수집 | 매일 시각 / 6·10·12·24·48시간 / OFF, 설정 변경 시 cron 자동 재기동 |
+| 📰 본문 + 이미지 추출 | cheerio 로 본문/대표이미지/본문이미지/기자명, 병렬 5, 타임아웃 8s, Google News redirect 해석 |
+| 📊 **감정 분석 + 근거** | 긍·부정 키워드 매칭 결과 + 점수 + 판단 사유 + 이슈 유형 + 위험 키워드 |
+| 🏛 관련 부서 자동 추천 | 출입국·교정·범죄예방·검찰·인권·법무실·디지털성범죄·마약 등 9개 |
+| 🚦 대응 우선순위 | 긴급 / 주의 / 참고 — 감정·매체·부정 키워드 수로 자동 산출 |
+| 📄 **PDF 보고서** | Puppeteer 서버 생성, **`#report-pdf-root` waitForSelector + %PDF 매직 검증**. 표지 / 총평·동향·대응 / 부정·긍정 이슈 / 부서 분포 / 목차 / 기사 30건 전문(이미지 포함) / 부록. **`/pdf/preview` (inline) + `/pdf/download` (attachment)** 분리 |
+| 📧 메일 | nodemailer SMTP — 본문 HTML + PDF 첨부 옵션 + 알림 트리거 시 ⚠️ 제목 |
+| 💡 **기능 개선 제안** | 헤더 “기능 개선 제안하기” 버튼 → 모달 → `POST /api/feedback` → 관리자 메일 (`FEEDBACK_TO_EMAIL`) |
+| 💬 카카오 | 구조 스텁 (`KAKAO_ENABLED` 토글, 기본 OFF) |
+| 📱 PWA | manifest.json + 192/512 아이콘, 모바일 반응형, 본문 접기/펼치기 |
 
 ---
 
@@ -92,6 +96,7 @@ https://trend-collector.onrender.com
 | `SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` `SMTP_FROM` | ⭐ | 메일 발송 (없으면 수집·리포트만 동작) |
 | `REPORT_TIME` | | 일일 cron 기본값 `HH:MM` (KST). 운영 중에는 UI 설정이 우선 |
 | `BASE_URL` | | 메일 본문 링크용 절대 URL (예: `https://trend-collector.onrender.com`) |
+| `FEEDBACK_TO_EMAIL` | ⭐ | 기능 개선 제안 메일 수신 주소 (없으면 제안 모달 비활성) |
 | `OPENAI_API_KEY` | | 추후 LLM 요약용 (현재 미사용) |
 | `KAKAO_ENABLED` | | `true` 일 때만 카카오 알림 시도 (기본 false, 스텁) |
 | `KAKAO_ACCESS_TOKEN` `KAKAO_TEMPLATE_ID` `KAKAO_TARGET_UUID` | | 카카오 알림용 (P2) |

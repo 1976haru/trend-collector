@@ -56,6 +56,10 @@ services:
       - key: BASE_URL
         sync: false
 
+      # 기능 개선 제안 메일 수신 (관리자)
+      - key: FEEDBACK_TO_EMAIL
+        sync: false
+
       # 추후 LLM 요약을 추가할 때 사용
       - key: OPENAI_API_KEY
         sync: false

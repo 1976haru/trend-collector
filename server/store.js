@@ -13,7 +13,7 @@ const REPORTS_DIR = path.join(DATA_DIR, 'reports');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  keywords:           ['정책', '지자체', '예산'],
+  keywords:           ['법무부', '검찰', '교정'],
   excludes:           [],
   recipients:         [],
   reportType:         'daily',
@@ -21,21 +21,30 @@ const DEFAULT_CONFIG = {
   requireAllInclude:  false,
 
   // ── 자동 수집 스케줄 ──────────────────────────
-  autoCollect:        true,                 // 자동 수집 ON/OFF
-  scheduleMode:       'daily',              // 'daily' | 'interval' | 'off'
-  intervalHours:      6,                    // scheduleMode === 'interval' 일 때 6/10/12/24/48
-  reportTime:         '09:00',              // scheduleMode === 'daily' 일 때 HH:MM (KST)
+  autoCollect:        true,
+  scheduleMode:       'daily',
+  intervalHours:      6,
+  reportTime:         '09:00',
 
-  // ── 자동 발송 옵션 ────────────────────────────
-  autoEmail:          true,                 // 수집 후 메일 자동 발송
-  attachPdf:          false,                // PDF 첨부 (P1: false, P2 에서 본격 지원)
+  // ── 수집 기간 (P1 추가) ───────────────────────
+  collectPeriod:      '7d',         // '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
+  collectFromDate:    '',           // YYYY-MM-DD (custom 일 때만)
+  collectToDate:      '',           // YYYY-MM-DD
 
-  // ── 알림 트리거 (메일 발송 트리거 보강) ───────
-  alertOnNegative:    true,                 // 부정 비율 50% 이상
-  alertOnTrending:    true,                 // 급상승 이슈 발생
-  alertOnGov:         false,                // 정부/공공기관 보도 발생
-  alertOnCentral:     false,                // 중앙언론 보도 발생
-  alertKeywords:      [],                   // 특정 키워드 포함 시
+  // ── 본문 / 이미지 ─────────────────────────────
+  extractContent:     true,         // 본문 추출 ON/OFF
+  includeImages:      true,         // PDF 에 이미지 포함
+
+  // ── 자동 발송 ─────────────────────────────────
+  autoEmail:          true,
+  attachPdf:          true,         // 자동 메일에 PDF 첨부
+
+  // ── 알림 트리거 ───────────────────────────────
+  alertOnNegative:    true,
+  alertOnTrending:    true,
+  alertOnGov:         false,
+  alertOnCentral:     false,
+  alertKeywords:      [],
 };
 
 let configCache = null;

@@ -10,6 +10,7 @@ import KeywordManager   from './components/keyword/KeywordManager.jsx';
 import RecentReports    from './components/reports/RecentReports.jsx';
 import ReportDetail     from './components/reports/ReportDetail.jsx';
 import RecipientSettings from './components/recipients/RecipientSettings.jsx';
+import FeedbackModal    from './components/feedback/FeedbackModal.jsx';
 
 import { useAuth }    from './hooks/useAuth.js';
 import { useConfig }  from './hooks/useConfig.js';
@@ -24,6 +25,7 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [sending,  setSending]  = useState('');
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   // 헬스 주기 갱신 (다음 자동수집 시각이 헤더에 표시되므로)
   useEffect(() => {
@@ -42,7 +44,12 @@ export default function App() {
     return <div style={S.splash}>⏳ 확인 중...</div>;
   }
   if (!auth.authed) {
-    return <Login onSubmit={auth.signIn} loading={auth.loading} error={auth.error} />;
+    return (
+      <>
+        <Login onSubmit={auth.signIn} loading={auth.loading} error={auth.error} />
+        <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      </>
+    );
   }
 
   // 리포트 상세 열기
@@ -67,7 +74,7 @@ export default function App() {
 
   return (
     <div style={S.app}>
-      <Header schedule={health?.schedule} />
+      <Header schedule={health?.schedule} onFeedback={() => setFeedbackOpen(true)} />
 
       <main style={S.main}>
         <TabBar
@@ -136,6 +143,8 @@ export default function App() {
           />
         )}
       </main>
+
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
   );
 }

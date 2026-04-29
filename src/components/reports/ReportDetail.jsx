@@ -5,8 +5,8 @@
 // ─────────────────────────────────────────────
 
 import { useState } from 'react';
-import { reportHtmlUrl, reportPdfUrl } from '../../services/api.js';
-import { fmtFull, fmtRelative } from '../../utils/datetime.js';
+import { reportPdfPreviewUrl, reportPdfDownloadUrl } from '../../services/api.js';
+import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 
 function safeUrl(u = '') {
   const s = String(u).trim();
@@ -45,13 +45,27 @@ function RiskBadge({ level, reasons }) {
   );
 }
 
+function PriorityBadge({ p }) {
+  const map = {
+    '긴급': { bg: '#fee2e2', fg: '#991b1b', icon: '🚨' },
+    '주의': { bg: '#fef3c7', fg: '#92400e', icon: '⚠️' },
+    '참고': { bg: '#dcfce7', fg: '#166534', icon: 'ℹ️' },
+  };
+  const v = map[p] || map['참고'];
+  return <span style={{ ...S.prio, background: v.bg, color: v.fg }}>{v.icon} {p}</span>;
+}
+
 function ArticleItem({ idx, art }) {
   const [open, setOpen] = useState(false);
   const sentColor = art.sentiment?.label === '긍정' ? '#16a34a'
                   : art.sentiment?.label === '부정' ? '#dc2626' : '#888';
+  const matched = art.sentiment?.matchedKeywords || { positive: [], negative: [] };
+  const reasons = art.sentiment?.reasons || [];
+  const depts = (art.departments || []).map(d => d.name).join(', ');
   return (
     <li style={S.item}>
-      <div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <PriorityBadge p={art.priority || '참고'} />
         <ExternalLink href={art.url} style={S.itemTitle}>
           [{idx}] {art.title}
         </ExternalLink>
@@ -59,15 +73,39 @@ function ArticleItem({ idx, art }) {
       <div style={S.itemMeta}>
         <span style={S.src}>[{art.source || '미상'}]</span>{' '}
         {art.date && <span>{art.date}</span>}
+        {art.reporter && <span> · {art.reporter}</span>}
         {' · '}#{art.keyword}
         {art.mediaType ? ` · ${art.mediaType}` : ''}
+        {art.sentiment?.issueType ? ` · ${art.sentiment.issueType}` : ''}
         {art.sentiment?.label && (
-          <span style={{ color: sentColor, fontWeight: 700 }}> · {art.sentiment.label}</span>
+          <span style={{ color: sentColor, fontWeight: 700 }}> · {art.sentiment.label} ({art.sentiment.score})</span>
         )}
         {' · '}
-        {art.extracted ? <span style={{ color: '#16a34a' }}>본문 추출✓</span>
+        {art.extracted ? <span style={{ color: '#16a34a' }}>본문✓</span>
                        : <span style={{ color: '#dc2626' }}>추출 실패</span>}
       </div>
+      {depts && (
+        <div style={S.deptLine}>🏛 관련 부서: <strong>{depts}</strong></div>
+      )}
+      {(reasons.length > 0 || matched.positive.length || matched.negative.length) && (
+        <div style={S.evidence}>
+          <div style={{ fontSize: 11, color: '#888', fontWeight: 600 }}>판단 근거</div>
+          <div style={{ fontSize: 12, color: '#444', marginTop: 3 }}>
+            {reasons.join(' · ')}
+          </div>
+          {(matched.positive.length || matched.negative.length) ? (
+            <div style={{ fontSize: 11.5, marginTop: 4 }}>
+              {matched.positive.length > 0 && (
+                <span style={{ color: '#16a34a' }}>긍정: {matched.positive.join(', ')}</span>
+              )}
+              {matched.positive.length > 0 && matched.negative.length > 0 && ' · '}
+              {matched.negative.length > 0 && (
+                <span style={{ color: '#dc2626' }}>부정: {matched.negative.join(', ')}</span>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
       {art.summary && <div style={S.itemSummary}>{art.summary}</div>}
 
       <button style={S.toggleBtn} onClick={() => setOpen(o => !o)}>
@@ -76,6 +114,18 @@ function ArticleItem({ idx, art }) {
 
       {open && (
         <div style={S.body}>
+          {art.images?.length > 0 && (
+            <div style={S.imgRow}>
+              {art.images.slice(0, 3).map((img, i) => (
+                <figure key={i} style={S.imgFig}>
+                  <img src={img.url} referrerPolicy="no-referrer" loading="lazy"
+                       onError={(e) => { e.target.style.display = 'none'; }}
+                       style={S.imgEl} />
+                  {img.caption && <figcaption style={S.imgCap}>{img.caption}</figcaption>}
+                </figure>
+              ))}
+            </div>
+          )}
           {art.extracted && art.contentText ? (
             art.contentText.split(/\n+/).map((p, i) => (
               <p key={i} style={S.para}>{p}</p>
@@ -112,11 +162,11 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
       <div style={S.actBar}>
         <button onClick={onClose} style={S.back}>← 목록</button>
         <div style={S.spacer} />
-        <ExternalLink href={reportPdfUrl(report.id)} style={S.pdfBtn}>
-          📄 PDF 다운로드
+        <ExternalLink href={reportPdfPreviewUrl(report.id)} style={S.linkBtn}>
+          🔍 PDF 미리보기
         </ExternalLink>
-        <ExternalLink href={reportHtmlUrl(report.id)} style={S.linkBtn}>
-          🔍 미리보기
+        <ExternalLink href={reportPdfDownloadUrl(report.id)} style={S.pdfBtn}>
+          📄 PDF 다운로드
         </ExternalLink>
         <button onClick={() => onEmail(report.id)} style={S.mail} disabled={sending}>
           {sending ? '발송 중…' : '✉️ 메일'}
@@ -125,13 +175,24 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
 
       {/* 헤더 */}
       <div style={S.head}>
-        <div style={S.title}>📰 일일 언론보도 보고서</div>
+        <div style={S.title}>📰 {report.title || '법무부 언론보도 모니터링 일일보고'}</div>
         <div style={S.meta}>
           📅 생성: <strong>{fmtFull(report.generatedAt)}</strong>{' '}
           <span style={S.metaSub}>({fmtRelative(report.generatedAt)})</span>{' '}
           · 🔄 {report.trigger === 'scheduled' ? '예약 실행' : '수동 실행'}
           {' · '}🆔 <span style={S.id}>{report.id}</span>
         </div>
+        {report.period && (
+          <div style={S.metaSub2}>
+            📆 수집 기간: {fmtShort(report.period.from)} ~ {fmtShort(report.period.to)} ({report.period.label})
+            {(report.period.outOfRange > 0 || report.period.parseFailed > 0) && (
+              <span style={{ marginLeft: 8, color: '#888' }}>
+                · 기간 외 제외 <strong>{report.period.outOfRange}건</strong>
+                {report.period.parseFailed > 0 && ` · 날짜 파싱 실패 ${report.period.parseFailed}건`}
+              </span>
+            )}
+          </div>
+        )}
         <div style={S.kwRow}>
           {(report.keywords || []).map(k => <span key={k} style={S.kw}>#{k}</span>)}
           {(report.excludes || []).map(k => <span key={k} style={S.exKw}>−{k}</span>)}
@@ -141,13 +202,29 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
       {/* 위험도 배지 */}
       <RiskBadge level={riskLevel.level} reasons={riskLevel.reasons} />
 
-      {/* 자동 요약 문장 */}
-      {summaryText && (
+      {/* 총평 / 주요 동향 / 대응 — 법무부 보고 형식 */}
+      {report.briefingText?.총평 ? (
+        <div style={S.summary}>
+          <div style={S.summaryLabel}>📝 일일 보고</div>
+          <div style={{ ...S.summaryText, marginTop: 4 }}><strong>총평:</strong> {report.briefingText.총평}</div>
+          {report.briefingText.주요보도동향 && (
+            <div style={{ ...S.summaryText, marginTop: 6 }}><strong>주요 보도 동향:</strong> {report.briefingText.주요보도동향}</div>
+          )}
+          {report.briefingText.대응필요이슈 && (
+            <div style={{ ...S.summaryText, marginTop: 6, color: report.actionRequired?.length ? '#9a3412' : '#222' }}>
+              <strong>대응 필요 이슈:</strong> {report.briefingText.대응필요이슈}
+            </div>
+          )}
+          {report.briefingText.관련부서참고사항 && (
+            <div style={{ ...S.summaryText, marginTop: 6 }}><strong>관련 부서:</strong> {report.briefingText.관련부서참고사항}</div>
+          )}
+        </div>
+      ) : summaryText ? (
         <div style={S.summary}>
           <div style={S.summaryLabel}>📝 오늘의 요약</div>
           <div style={S.summaryText}>{summaryText}</div>
         </div>
-      )}
+      ) : null}
 
       {/* 급상승 */}
       {trending.length > 0 && (
@@ -207,6 +284,50 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
                 <div style={{ ...S.bar, width: `${Math.round((v / mediaMax) * 100)}%`, background: '#0d1117' }} />
               </div>
               <div style={S.mediaCnt}>{v}건</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 부정 이슈 TOP */}
+      {(report.negativeIssues || []).length > 0 && (
+        <div style={S.panel}>
+          <div style={S.panelLabel}>🔴 부정 이슈 TOP {report.negativeIssues.length}</div>
+          <ol style={S.list}>
+            {report.negativeIssues.map((art, i) => (
+              <li key={art.id || i} style={S.itemSmall}>
+                <PriorityBadge p={art.priority || '참고'} />
+                <ExternalLink href={art.url} style={S.itemTitle}>{art.title}</ExternalLink>
+                <div style={S.itemMeta}>[{art.source}] · 부정 키워드: {(art.sentiment?.matchedKeywords?.negative || []).slice(0, 5).join(', ') || '—'}</div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* 긍정 이슈 TOP */}
+      {(report.positiveIssues || []).length > 0 && (
+        <div style={S.panel}>
+          <div style={S.panelLabel}>🟢 긍정 이슈 TOP {report.positiveIssues.length}</div>
+          <ol style={S.list}>
+            {report.positiveIssues.map((art, i) => (
+              <li key={art.id || i} style={S.itemSmall}>
+                <ExternalLink href={art.url} style={S.itemTitle}>{art.title}</ExternalLink>
+                <div style={S.itemMeta}>[{art.source}] · 긍정 키워드: {(art.sentiment?.matchedKeywords?.positive || []).slice(0, 5).join(', ') || '—'}</div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* 부서별 분포 */}
+      {report.departmentCounts && Object.keys(report.departmentCounts).length > 0 && (
+        <div style={S.panel}>
+          <div style={S.panelLabel}>🏛 관련 부서별 보도량</div>
+          {Object.entries(report.departmentCounts).map(([k, v]) => (
+            <div key={k} style={S.deptRow}>
+              <span style={S.deptName}>{k}</span>
+              <span style={S.deptCnt}>{v}건</span>
             </div>
           ))}
         </div>
@@ -304,4 +425,19 @@ const S = {
   body:        { marginTop: 9, background: '#fafaf6', borderRadius: 7, padding: '10px 13px', border: '1px solid #f0ede8' },
   para:        { margin: '4px 0', fontSize: 13, color: '#222', lineHeight: 1.7 },
   bodyMissing: { fontSize: 12.5, color: '#dc2626' },
+
+  metaSub2:    { fontSize: 12, color: '#555', marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 4 },
+  prio:        { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600 },
+  evidence:    { background: '#f8f6f2', borderLeft: '2px solid #0d1117', borderRadius: 4, padding: '6px 10px', margin: '6px 0' },
+  deptLine:    { fontSize: 12, color: '#444', marginTop: 4 },
+  itemSmall:   { padding: '7px 0', borderBottom: '1px solid #f0ede8', fontSize: 13 },
+
+  imgRow:      { display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  imgFig:      { margin: 0, flex: '1 1 30%', minWidth: 120, maxWidth: '32%' },
+  imgEl:       { width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: 6, background: '#eee' },
+  imgCap:      { fontSize: 11, color: '#666', marginTop: 2 },
+
+  deptRow:     { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f0ede8', fontSize: 13 },
+  deptName:    { color: '#0d1117' },
+  deptCnt:     { color: '#555', fontWeight: 600 },
 };
