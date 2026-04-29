@@ -7,6 +7,7 @@ import * as api from '../../services/api.js';
 import { fmtFull, fmtRelative } from '../../utils/datetime.js';
 import MailSettings   from './MailSettings.jsx';
 import SourceSettings from './SourceSettings.jsx';
+import TestSearch     from './TestSearch.jsx';
 
 export default function AdminPanel() {
   const [feedback, setFeedback] = useState([]);
@@ -61,12 +62,16 @@ export default function AdminPanel() {
           style={{ ...S.tab, ...(tab === 'source' ? S.tabOn : {}) }}>
           📰 뉴스 소스 설정
         </button>
+        <button onClick={() => setTab('search')}
+          style={{ ...S.tab, ...(tab === 'search' ? S.tabOn : {}) }}>
+          🧪 검색 테스트
+        </button>
         <button onClick={() => setTab('stats')}
           style={{ ...S.tab, ...(tab === 'stats' ? S.tabOn : {}) }}>
           📈 추출 실패 도메인 {stats.length > 0 && <span style={S.tabCount}>{stats.length}</span>}
         </button>
         <div style={{ flex: 1 }} />
-        {tab !== 'mail' && tab !== 'source' && (
+        {!['mail', 'source', 'search'].includes(tab) && (
           <button onClick={refresh} disabled={loading} style={S.refresh}>
             {loading ? '⏳' : '↻'} 새로고침
           </button>
@@ -75,6 +80,7 @@ export default function AdminPanel() {
 
       {tab === 'mail'   && <MailSettings />}
       {tab === 'source' && <SourceSettings />}
+      {tab === 'search' && <TestSearch />}
 
       {error && <div style={S.err}>⚠️ {error}</div>}
 

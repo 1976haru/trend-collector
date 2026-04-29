@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
 import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings } from './store.js';
-import { runCollection, reextractReport } from './collector.js';
+import { runCollection, reextractReport, fetchSourceRaw } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
@@ -401,6 +401,38 @@ api.put('/admin/source-settings', async (req, res) => {
       },
       naverConfigured: isNaverConfigured(),
       naverSource:     getNaverSource(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── 관리자: 키워드 검색 테스트 (필터 적용 전 raw 결과) ────
+api.post('/admin/test-search', async (req, res) => {
+  const keyword = String(req.body?.keyword || '').trim();
+  if (!keyword) return res.status(400).json({ error: 'keyword 가 필요합니다.' });
+  const useGoogle = req.body?.useGoogle !== false;
+  const useNaver  = req.body?.useNaver  !== false;
+
+  try {
+    const raw = await fetchSourceRaw(keyword, { useGoogle, useNaver });
+    res.json({
+      ok: true,
+      keyword,
+      google: {
+        count:  raw.google.articles.length,
+        error:  raw.google.error,
+        sample: raw.google.articles.slice(0, 10).map(a => ({
+          title: a.title, source: a.source, date: a.date, rawDate: a.rawDate, url: a.url,
+        })),
+      },
+      naver: {
+        count:  raw.naver.articles.length,
+        error:  raw.naver.error,
+        sample: raw.naver.articles.slice(0, 10).map(a => ({
+          title: a.title, source: a.source, date: a.date, rawDate: a.rawDate, url: a.url,
+        })),
+      },
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

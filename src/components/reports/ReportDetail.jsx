@@ -493,6 +493,55 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
         </div>
       )}
 
+      {/* 결과 0건 친절 안내 */}
+      {total === 0 && report.collectionDiagnostics?.length > 0 && (
+        <div style={S.zeroBox}>
+          <div style={S.zeroTitle}>📭 최종 수집 결과 0건</div>
+          <div style={S.zeroDetail}>
+            {(() => {
+              const totalRaw    = report.collectionDiagnostics.reduce((s, d) => s + (d.raw || 0), 0);
+              const totalDateOut= report.collectionDiagnostics.reduce((s, d) => s + (d.dateOut || 0), 0);
+              if (totalRaw === 0) return '뉴스 소스에서 검색 결과를 가져오지 못했습니다. 관리 → 검색 테스트로 raw 결과를 확인해 보세요.';
+              return `Raw 검색 결과는 ${totalRaw}건이 있었으나, 기간 외 제외(${totalDateOut}건) 등으로 모두 제외되었습니다. 수집 기간을 늘리거나 키워드를 단순화해 보세요.`;
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* 수집 진단 패널 — 키워드 × 소스 매트릭스 */}
+      {report.collectionDiagnostics?.length > 0 && (
+        <div style={S.panel}>
+          <div style={S.panelLabel}>🔬 수집 진단 (키워드별·소스별 단계 손실)</div>
+          <div style={S.diagBox}>
+            <div style={S.diagHead}>
+              <span>키워드</span>
+              <span>소스</span>
+              <span>raw</span>
+              <span>기간</span>
+              <span>중복</span>
+              <span>제외</span>
+              <span>최종</span>
+            </div>
+            {report.collectionDiagnostics.map((d, i) => (
+              <div key={i} style={{ ...S.diagRow, ...(d.error ? S.diagRowErr : d.final === 0 ? S.diagRowZero : {}) }}>
+                <span style={S.diagKw}>{d.keyword}</span>
+                <span style={S.diagSrc}>{d.source === 'google' ? '🌍' : '🇰🇷'} {d.source}</span>
+                <span>{d.raw}</span>
+                <span style={d.dateOut > 0 ? { color: '#dc2626' } : null}>−{d.dateOut}</span>
+                <span style={d.dedupeOut > 0 ? { color: '#92400e' } : null}>−{d.dedupeOut}</span>
+                <span style={d.excludeOut > 0 ? { color: '#92400e' } : null}>−{d.excludeOut}</span>
+                <span style={S.diagFinal}>{d.final}</span>
+              </div>
+            ))}
+          </div>
+          {report.dateUnknownCount > 0 && (
+            <div style={S.diagNote}>
+              ℹ️ 날짜 미확인 기사 {report.dateUnknownCount}건이 포함되어 있습니다. (기본 보존)
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 소스별 통계 */}
       {report.sourceCounts && Object.keys(report.sourceCounts).length > 0 && (
         <div style={S.panel}>
@@ -695,4 +744,22 @@ const S = {
   reextOne:      { padding: '6px 11px', minHeight: 32, borderRadius: 7, border: 'none',
                    background: '#f59e0b', color: 'white', fontSize: 12, fontWeight: 600,
                    cursor: 'pointer', fontFamily: 'inherit' },
+
+  zeroBox:    { background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412',
+                borderRadius: 10, padding: '12px 16px' },
+  zeroTitle:  { fontSize: 14, fontWeight: 700, marginBottom: 4 },
+  zeroDetail: { fontSize: 13, lineHeight: 1.6 },
+
+  diagBox:    { background: 'white', borderRadius: 8, overflow: 'hidden' },
+  diagHead:   { display: 'grid', gridTemplateColumns: '1.5fr 80px 50px 50px 50px 50px 50px', gap: 6,
+                padding: '7px 4px', borderBottom: '1.5pt solid #0d1117',
+                fontSize: 10.5, color: '#888', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px' },
+  diagRow:    { display: 'grid', gridTemplateColumns: '1.5fr 80px 50px 50px 50px 50px 50px', gap: 6,
+                padding: '7px 4px', borderBottom: '1px solid #f0ede8', fontSize: 12 },
+  diagRowErr: { background: '#fff5f5', color: '#c53030' },
+  diagRowZero:{ background: '#fafaf6', color: '#888' },
+  diagKw:     { fontWeight: 600, color: '#0d1117' },
+  diagSrc:    { color: '#555' },
+  diagFinal:  { fontWeight: 700, color: '#0d1117' },
+  diagNote:   { fontSize: 11.5, color: '#666', marginTop: 8 },
 };

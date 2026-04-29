@@ -52,6 +52,25 @@ async function fetchRss(keyword) {
 }
 
 /**
+ * 테스트 검색용 — 한 키워드에 대해 raw 결과를 source 별로 따로 반환.
+ * 필터/dedup 없이 원본 그대로.
+ */
+export async function fetchSourceRaw(keyword, { useGoogle = true, useNaver = true } = {}) {
+  const out = { google: { articles: [], error: null }, naver: { articles: [], error: null } };
+  const tasks = [];
+  if (useGoogle) tasks.push(fetchRss(keyword).then(a => out.google.articles = a)
+    .catch(e => out.google.error = e.message || String(e)));
+  if (useNaver && isNaverConfigured()) {
+    tasks.push(fetchNaverNews(keyword, { display: MAX_PER_KEYWORD }).then(a => out.naver.articles = a)
+      .catch(e => out.naver.error = e.message || String(e)));
+  } else if (useNaver) {
+    out.naver.error = 'Naver API 미설정';
+  }
+  await Promise.all(tasks);
+  return out;
+}
+
+/**
  * 단일 키워드에 대해 활성화된 모든 소스를 병렬 호출.
  * 한 소스가 실패해도 다른 소스는 계속 진행한다.
  * @param {string} keyword
@@ -163,15 +182,42 @@ function parsePubDate(raw) {
 }
 
 // 기간 필터 (수집 후 적용)
+// 변경: 날짜 파싱 실패 기사는 즉시 제외하지 않고 dateUnknown 으로 표시 후 보존.
+// 기간 외 기사만 실제로 제외.
 function applyPeriodFilter(articles, period) {
   let kept = [], outOfRange = 0, parseFailed = 0;
   for (const a of articles) {
     const t = parsePubDate(a.rawDate);
-    if (t === null) { parseFailed++; continue; }
+    if (t === null) {
+      a.dateUnknown = true;
+      kept.push(a);                  // 보존 (기본 포함)
+      parseFailed++;
+      continue;
+    }
     if (t < period.from || t > period.to) { outOfRange++; continue; }
     kept.push(a);
   }
   return { kept, outOfRange, parseFailed };
+}
+
+// 모든 키워드를 포함하는 기사만 (requireAllInclude=true 일 때만 적용)
+function applyRequireAllKeywords(articles, keywords = []) {
+  if (!keywords || keywords.length < 2) return articles;
+  const lows = keywords.map(k => String(k).toLowerCase());
+  return articles.filter(a => {
+    const hay = `${a.title || ''} ${a.summary || ''} ${a.contentText || ''}`.toLowerCase();
+    return lows.every(k => hay.includes(k));
+  });
+}
+
+// 키워드/소스별 카운트 헬퍼
+function countByKeySrc(articles) {
+  const m = {};
+  for (const a of articles) {
+    const k = `${a.keyword}//${a.sourceProvider || 'unknown'}`;
+    m[k] = (m[k] || 0) + 1;
+  }
+  return m;
 }
 
 // 보고용 한 줄 요약 — 매체·감정·부서를 합쳐 1문장.
@@ -211,19 +257,53 @@ function normalize(s = '') {
     .replace(/[“”"'‘’`,.\-()\[\]{}<>!?·…]/g, '').trim();
 }
 
+// URL 기준 중복 제거 (제목 기준은 너무 공격적이라 제외)
+// + 같은 source 내에서만 정규화된 제목으로 중복 제거 (한 소스가 동일 기사를 여러 키워드로 반환하는 경우)
 function dedupe(articles) {
-  const urls = new Set(), titles = new Set();
-  const out  = [];
+  const urls = new Map();              // url → article
+  const titlesBySrc = new Map();       // `${title}__${source}` → article
+  const out = [];
   for (const a of articles) {
-    const u = (a.url || '').trim();
-    const t = normalize(a.title || '');
-    if (u && urls.has(u))   continue;
-    if (t && titles.has(t)) continue;
-    if (u) urls.add(u);
-    if (t) titles.add(t);
+    const u  = (a.url || '').trim();
+    const t  = normalize(a.title || '');
+    const sp = a.sourceProvider || 'unknown';
+    if (u && urls.has(u)) {
+      // 같은 URL — flags 만 병합
+      const existing = urls.get(u);
+      existing.sourceFlags = { ...(existing.sourceFlags || {}), [existing.sourceProvider]: true, [sp]: true };
+      continue;
+    }
+    if (t && sp) {
+      const k = `${t}__${sp}`;
+      if (titlesBySrc.has(k)) continue;       // 같은 소스에서만 제목 기반 dedup
+      titlesBySrc.set(k, a);
+    }
+    a.sourceFlags = { [sp]: true };
+    if (u) urls.set(u, a);
     out.push(a);
   }
   return out;
+}
+
+// 병합 후 동일/유사 제목이 여러 소스에 있는 경우 sourceFlags 추가 표시 (정보용, 제거 X)
+function markCrossSourceFlags(articles) {
+  const byTitle = new Map();           // normalized title → article[]
+  for (const a of articles) {
+    const t = normalize(a.title || '');
+    if (!t) continue;
+    if (!byTitle.has(t)) byTitle.set(t, []);
+    byTitle.get(t).push(a);
+  }
+  for (const arts of byTitle.values()) {
+    if (arts.length < 2) continue;
+    const flags = {};
+    for (const a of arts) {
+      const sp = a.sourceProvider || 'unknown';
+      flags[sp] = true;
+      Object.assign(flags, a.sourceFlags || {});
+    }
+    for (const a of arts) a.sourceFlags = flags;
+  }
 }
 
 function applyExcludes(articles, excludes = []) {
@@ -360,8 +440,18 @@ export async function runCollection({ trigger = 'manual' } = {}) {
 
   const all    = [];
   const errors = [];
+  // 키워드별 raw 진단
+  const rawByKeySrc = {};        // { '보호관찰//google': 25, '보호관찰//naver': 100 }
+  const errByKeySrc = {};        // { '보호관찰//naver': 'HTTP 500' }
   for (const kw of cfg.keywords) {
     const r = await fetchAllSources(kw, cfg);
+    for (const a of (r.articles || [])) {
+      const k = `${kw}//${a.sourceProvider || 'unknown'}`;
+      rawByKeySrc[k] = (rawByKeySrc[k] || 0) + 1;
+    }
+    for (const e of (r.errors || [])) {
+      errByKeySrc[`${kw}//${e.source}`] = e.error;
+    }
     all.push(...r.articles);
     errors.push(...r.errors);
   }
@@ -369,18 +459,58 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     throw new Error('활성화된 뉴스 소스가 없습니다. Google News / Naver News 둘 중 하나는 켜야 합니다.');
   }
 
-  // 0) 수집 기간 필터 (publishedAt 기준)
+  // 단계별 카운트를 위한 스냅샷
+  const cRaw   = { ...rawByKeySrc };
+  // 1) 기간 필터 — dateUnknown 은 보존
   const period = resolvePeriod(cfg);
   const filtered = applyPeriodFilter(all, period);
-  let processed = filtered.kept;
+  let processed  = filtered.kept;
+  const cAfterDate = countByKeySrc(processed);
 
-  // 1) 중복 / 광고 / 제외
+  // 2) 중복 제거 (URL 기준 + 같은 소스 내 제목 정규화)
   processed = dedupe(processed);
+  markCrossSourceFlags(processed);
+  const cAfterDedupe = countByKeySrc(processed);
+
+  // 3) 광고 / 제외 키워드
   if (cfg.filterAds) processed = applyAdFilter(processed);
   processed = applyExcludes(processed, cfg.excludes);
+  const cAfterExclude = countByKeySrc(processed);
 
-  // 1.5) 최대 30건
+  // 4) 사용자가 명시적으로 켰을 때만 모든 키워드 포함 필터
+  if (cfg.requireAllInclude === true && cfg.keywords?.length > 1) {
+    processed = applyRequireAllKeywords(processed, cfg.keywords);
+  }
+
+  // 5) 최대 30건
   if (processed.length > 30) processed = processed.slice(0, 30);
+  const cFinal = countByKeySrc(processed);
+
+  // 진단 데이터 빌드 — 키워드 × 소스 매트릭스
+  const collectionDiagnostics = [];
+  const sources = ['google', 'naver'];
+  for (const kw of cfg.keywords) {
+    for (const sp of sources) {
+      const k = `${kw}//${sp}`;
+      const raw = rawByKeySrc[k] || 0;
+      const err = errByKeySrc[k] || null;
+      if (raw === 0 && !err) continue;        // 활성 안 된 소스 제외
+      const dateK   = cAfterDate[k]    || 0;
+      const dedupeK = cAfterDedupe[k]  || 0;
+      const excK    = cAfterExclude[k] || 0;
+      const finalK  = cFinal[k]        || 0;
+      collectionDiagnostics.push({
+        keyword: kw, source: sp, raw,
+        afterDate:    dateK,    dateOut:    raw - dateK,
+        afterDedupe:  dedupeK,  dedupeOut:  dateK - dedupeK,
+        afterExclude: excK,     excludeOut: dedupeK - excK,
+        final:        finalK,
+        error:        err,
+      });
+    }
+  }
+  // dateUnknown 카운트
+  const dateUnknownCount = processed.filter(a => a.dateUnknown).length;
 
   // 2) 각 기사에 mediaType 부여
   for (const a of processed) {
@@ -521,8 +651,12 @@ export async function runCollection({ trigger = 'manual' } = {}) {
       from:       new Date(period.from).toISOString(),
       to:         new Date(period.to).toISOString(),
       outOfRange: filtered.outOfRange,
-      parseFailed: filtered.parseFailed,
+      parseFailed: filtered.parseFailed,        // 이제는 '제외' 가 아니라 '날짜 미확인 보존' 카운트
     },
+
+    // 단계별 수집 진단 (키워드 × 소스)
+    collectionDiagnostics,
+    dateUnknownCount,
 
     // 분석
     mediaTypes:    MEDIA_TYPES,
