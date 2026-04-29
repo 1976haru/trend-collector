@@ -57,8 +57,9 @@ services:
         sync: false
 
       # 기능 개선 제안 메일 수신 (관리자)
+      # 미설정 시 코드 기본값 hsuhyun77@naver.com 사용.
       - key: FEEDBACK_TO_EMAIL
-        sync: false
+        value: hsuhyun77@naver.com
 
       # 추후 LLM 요약을 추가할 때 사용
       - key: OPENAI_API_KEY

@@ -5,7 +5,10 @@
 // ─────────────────────────────────────────────
 
 import { useState, useMemo } from 'react';
-import { downloadReportPdf, previewReportPdf, reportHtmlDebugUrl } from '../../services/api.js';
+import {
+  downloadReportPdf, previewReportPdf, reportHtmlDebugUrl,
+  reextractReport, reextractArticle, downloadNegativePdf,
+} from '../../services/api.js';
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 
 function safeUrl(u = '') {
@@ -21,11 +24,12 @@ function ExternalLink({ href, children, style }) {
   );
 }
 
-function Stat({ label, value, color }) {
+function Stat({ label, value, color, sub }) {
   return (
     <div style={S.stat}>
       <div style={{ ...S.statValue, color }}>{value}</div>
       <div style={S.statLabel}>{label}</div>
+      {sub && <div style={S.statSub}>{sub}</div>}
     </div>
   );
 }
@@ -55,7 +59,13 @@ function PriorityBadge({ p }) {
   return <span style={{ ...S.prio, background: v.bg, color: v.fg }}>{v.icon} {p}</span>;
 }
 
-function ArticleItem({ idx, art, viewMode = 'paper' }) {
+function ArticleItem({ idx, art, viewMode = 'paper', onReextract }) {
+  const [busyOne, setBusyOne] = useState(false);
+  async function handleOneReextract() {
+    if (!onReextract) return;
+    setBusyOne(true);
+    try { await onReextract(art.id); } finally { setBusyOne(false); }
+  }
   const [open, setOpen] = useState(viewMode === 'paper');     // 원문형은 기본 펼침
   const sentColor = art.sentiment?.label === '긍정' ? '#16a34a'
                   : art.sentiment?.label === '부정' ? '#dc2626' : '#888';
@@ -125,9 +135,21 @@ function ArticleItem({ idx, art, viewMode = 'paper' }) {
       )}
       {viewMode === 'analytic' && art.summary && <div style={S.itemSummary}>{art.summary}</div>}
 
-      <button style={S.toggleBtn} onClick={() => setOpen(o => !o)}>
-        {open ? '▲ 본문 접기' : '▼ 본문 펼치기'}
-      </button>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+        <button style={S.toggleBtn} onClick={() => setOpen(o => !o)}>
+          {open ? '▲ 본문 접기' : '▼ 본문 펼치기'}
+        </button>
+        {!art.extracted && art.url && (
+          <a href={art.url} target="_blank" rel="noopener noreferrer" style={S.origLink}>
+            🔗 원문 보기
+          </a>
+        )}
+        {!art.extracted && onReextract && (
+          <button style={S.reextOne} onClick={handleOneReextract} disabled={busyOne}>
+            {busyOne ? '⏳ 재추출…' : '🔄 이 기사 재추출'}
+          </button>
+        )}
+      </div>
 
       {open && (
         <div style={S.body}>
@@ -159,12 +181,13 @@ function ArticleItem({ idx, art, viewMode = 'paper' }) {
   );
 }
 
-export default function ReportDetail({ report, onClose, onEmail, sending }) {
-  const [pdfBusy,   setPdfBusy]   = useState('');     // 'preview' | 'download' | ''
+export default function ReportDetail({ report, onClose, onEmail, onReportRefresh, sending }) {
+  const [pdfBusy,   setPdfBusy]   = useState('');     // 'preview' | 'download' | 'negative' | ''
   const [pdfError,  setPdfError]  = useState('');
   const [pdfOk,     setPdfOk]     = useState('');
-  const [viewMode,  setViewMode]  = useState('paper');     // 'paper' | 'analytic'
+  const [viewMode,  setViewMode]  = useState('paper');     // 'paper' | 'analytic' | 'failures'
   const [negFirst,  setNegFirst]  = useState(true);
+  const [reextBusy, setReextBusy] = useState('');     // 'all' | 'failed' | id | ''
 
   if (!report) return null;
   const articlesRaw = report.articles || [];
@@ -176,16 +199,33 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
   const riskLevel   = report.riskLevel   || { level: '안정', reasons: [] };
   const total       = articlesRaw.length;
 
-  // 부정 우선 정렬
+  // 부정 우선 정렬 + 실패 전용 보기 필터
   const a = useMemo(() => {
-    if (!negFirst) return articlesRaw;
-    const order = { 긴급: 0, 주의: 1, 참고: 2 };
-    const sentOrder = { '부정': 0, '중립': 1, '긍정': 2 };
-    return [...articlesRaw].sort((x, y) =>
-      (order[x.priority] ?? 3) - (order[y.priority] ?? 3) ||
-      (sentOrder[x.sentiment?.label] ?? 3) - (sentOrder[y.sentiment?.label] ?? 3)
-    );
-  }, [articlesRaw, negFirst]);
+    let list = articlesRaw;
+    if (viewMode === 'failures') list = list.filter(x => !x.extracted);
+    if (negFirst) {
+      const order = { 긴급: 0, 주의: 1, 참고: 2 };
+      const sentOrder = { '부정': 0, '중립': 1, '긍정': 2 };
+      list = [...list].sort((x, y) =>
+        (order[x.priority] ?? 3) - (order[y.priority] ?? 3) ||
+        (sentOrder[x.sentiment?.label] ?? 3) - (sentOrder[y.sentiment?.label] ?? 3)
+      );
+    }
+    return list;
+  }, [articlesRaw, negFirst, viewMode]);
+
+  // 추출 통계 (서버 stats 우선, 없으면 클라이언트 계산)
+  const stats = useMemo(() => {
+    if (report.extractionStats) return report.extractionStats;
+    const ext = articlesRaw.filter(x => x.extracted).length;
+    const img = articlesRaw.filter(x => (x.images?.length || 0) > 0).length;
+    return {
+      total: articlesRaw.length, extracted: ext, failed: articlesRaw.length - ext,
+      withImage: img, withoutImage: articlesRaw.length - img,
+      quality: { success: ext, partial: 0, fallback: 0, failed: articlesRaw.length - ext },
+    };
+  }, [report.extractionStats, articlesRaw]);
+  const extractRate = stats.total ? Math.round((stats.extracted / stats.total) * 100) : 0;
 
   async function onPreview() {
     setPdfBusy('preview'); setPdfError(''); setPdfOk('');
@@ -209,6 +249,29 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
       setPdfBusy('');
     }
   }
+  async function onDownloadNegative() {
+    setPdfBusy('negative'); setPdfError(''); setPdfOk('');
+    try {
+      const r = await downloadNegativePdf(report.id);
+      setPdfOk(`💾 부정 이슈 PDF 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
+    } catch (e) {
+      setPdfError(e.message || String(e));
+    } finally {
+      setPdfBusy('');
+    }
+  }
+  async function onReextract(scope) {
+    setReextBusy(scope); setPdfError(''); setPdfOk('');
+    try {
+      const r = await reextractReport(report.id, { failedOnly: scope === 'failed' });
+      setPdfOk(`🔄 재추출 완료 (${r.reextracted}건)`);
+      onReportRefresh && onReportRefresh(r.report);
+    } catch (e) {
+      setPdfError(e.message || String(e));
+    } finally {
+      setReextBusy('');
+    }
+  }
 
   const mediaEntries = Object.entries(mediaCounts).filter(([, v]) => v > 0);
   const mediaMax     = Math.max(1, ...mediaEntries.map(([, v]) => v));
@@ -225,9 +288,31 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
         <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn}>
           {pdfBusy === 'download' ? '⏳ 생성 중…' : '📄 PDF 다운로드'}
         </button>
+        <button onClick={onDownloadNegative} disabled={!!pdfBusy} style={S.negPdfBtn}>
+          {pdfBusy === 'negative' ? '⏳ 생성 중…' : '🚨 부정 PDF'}
+        </button>
         <button onClick={() => onEmail(report.id)} style={S.mail} disabled={sending}>
           {sending ? '발송 중…' : '✉️ 메일'}
         </button>
+      </div>
+
+      {/* PDF 품질 + 재추출 액션 */}
+      <div style={S.qualityBar}>
+        <div style={S.qualityText}>
+          📰 본문 추출 <strong>{stats.extracted}/{stats.total}건</strong> ({extractRate}%) ·
+          🖼 이미지 포함 <strong>{stats.withImage}/{stats.total}건</strong> ·
+          ⚠️ 실패 <strong style={{ color: stats.failed > 0 ? '#dc2626' : '#888' }}>{stats.failed}건</strong>
+        </div>
+        <div style={S.qualityActions}>
+          {stats.failed > 0 && (
+            <button onClick={() => onReextract('failed')} disabled={!!reextBusy} style={S.reextBtn}>
+              {reextBusy === 'failed' ? '⏳ 재추출 중…' : `🔄 실패 ${stats.failed}건 재추출`}
+            </button>
+          )}
+          <button onClick={() => onReextract('all')} disabled={!!reextBusy} style={S.reextBtnSm}>
+            {reextBusy === 'all' ? '⏳…' : '↻ 전체 재추출'}
+          </button>
+        </div>
       </div>
 
       {/* PDF 상태 메시지 */}
@@ -244,9 +329,14 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
       {/* 보기 모드 + 정렬 토글 */}
       <div style={S.toolRow}>
         <div style={S.viewToggle}>
-          {[{ v: 'paper', l: '📰 원문형' }, { v: 'analytic', l: '📊 분석형' }].map(o => (
+          {[
+            { v: 'paper',    l: '📰 원문형' },
+            { v: 'analytic', l: '📊 분석형' },
+            { v: 'failures', l: `⚠️ 실패만 (${stats.failed})`, dim: stats.failed === 0 },
+          ].map(o => (
             <button key={o.v} onClick={() => setViewMode(o.v)}
-              style={{ ...S.viewBtn, ...(viewMode === o.v ? S.viewOn : {}) }}>{o.l}</button>
+              disabled={o.dim}
+              style={{ ...S.viewBtn, ...(viewMode === o.v ? S.viewOn : {}), ...(o.dim ? S.viewDim : {}) }}>{o.l}</button>
           ))}
         </div>
         <label style={S.negToggle}>
@@ -321,12 +411,13 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
         </div>
       )}
 
-      {/* 통계 카드 */}
+      {/* 4-카드 요약 */}
       <div data-stats-grid style={S.stats}>
-        <Stat label="총 보도" value={total} color="#0d1117" />
-        <Stat label="긍정"   value={sentiment.positive || 0} color="#16a34a" />
-        <Stat label="부정"   value={sentiment.negative || 0} color="#dc2626" />
-        <Stat label="중립"   value={sentiment.neutral  || 0} color="#94a3b8" />
+        <Stat label="총 보도"     value={total}                                     color="#0d1117" />
+        <Stat label="부정 이슈"   value={sentiment.negative || 0}                  color="#dc2626" sub={`${sentiment.negativePct || 0}%`} />
+        <Stat label="본문 추출률" value={`${extractRate}%`}                         color={extractRate >= 80 ? '#16a34a' : extractRate >= 50 ? '#f59e0b' : '#dc2626'}
+              sub={`${stats.extracted}/${stats.total}`} />
+        <Stat label="대응 필요"   value={(report.actionRequired?.length || 0)}     color="#9a3412" sub={`긴급 ${report.actionRequired?.filter(x=>x.priority==='긴급').length || 0}`} />
       </div>
       {typeof report.extractedCount === 'number' && (
         <div style={S.extInfo}>
@@ -449,7 +540,22 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
       <div style={S.panel}>
         <div style={S.panelLabel}>📌 기사 전체 ({a.length}건) — 본문 펼치기 가능</div>
         <ol style={S.list}>
-          {a.map((art, i) => <ArticleItem key={art.id || i} idx={i + 1} art={art} viewMode={viewMode} />)}
+          {a.map((art, i) => (
+            <ArticleItem
+              key={art.id || i}
+              idx={i + 1}
+              art={art}
+              viewMode={viewMode}
+              onReextract={async (articleId) => {
+                try {
+                  const r = await reextractArticle(report.id, articleId);
+                  onReportRefresh && onReportRefresh(r.report);
+                } catch (e) {
+                  setPdfError(e.message);
+                }
+              }}
+            />
+          ))}
         </ol>
       </div>
     </div>
@@ -562,4 +668,31 @@ const S = {
                  color: '#0d1117', lineHeight: 1.4, margin: '8px 0 4px' },
   briefLine:   { background: '#f8f6f2', borderLeft: '2px solid #0d1117',
                  padding: '6px 11px', margin: '8px 0', fontSize: 12.5, lineHeight: 1.6 },
+
+  statSub:     { fontSize: 10.5, color: '#888', marginTop: 2 },
+
+  qualityBar:    { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+                   background: 'white', borderRadius: 10, padding: '10px 14px',
+                   boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
+  qualityText:   { flex: '1 1 280px', fontSize: 12.5, color: '#444', lineHeight: 1.6 },
+  qualityActions:{ display: 'flex', gap: 6, flexWrap: 'wrap' },
+  reextBtn:      { padding: '8px 12px', minHeight: 38, borderRadius: 7, border: 'none',
+                   background: '#f59e0b', color: 'white', fontSize: 12.5, fontWeight: 700,
+                   cursor: 'pointer', fontFamily: 'inherit' },
+  reextBtnSm:    { padding: '8px 12px', minHeight: 38, borderRadius: 7,
+                   border: '1.5px solid #d5d0c8', background: 'white', color: '#444',
+                   fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+
+  negPdfBtn:     { padding: '9px 13px', minHeight: 40, borderRadius: 8, border: 'none',
+                   background: '#dc2626', color: 'white', fontSize: 12.5, fontWeight: 700,
+                   cursor: 'pointer', fontFamily: 'inherit' },
+
+  viewDim:       { opacity: 0.4, cursor: 'not-allowed' },
+
+  origLink:      { padding: '6px 11px', minHeight: 32, borderRadius: 7,
+                   border: '1.5px solid #2563eb', background: '#eff6ff', color: '#2563eb',
+                   fontSize: 12, fontWeight: 600, textDecoration: 'none' },
+  reextOne:      { padding: '6px 11px', minHeight: 32, borderRadius: 7, border: 'none',
+                   background: '#f59e0b', color: 'white', fontSize: 12, fontWeight: 600,
+                   cursor: 'pointer', fontFamily: 'inherit' },
 };

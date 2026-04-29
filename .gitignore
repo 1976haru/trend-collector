@@ -14,8 +14,11 @@ dist-ssr/
 .env.local
 .env.*.local
 
-# 로컬 데이터 (config / 리포트 JSON)
+# 로컬 데이터 (config / 리포트 / 피드백 JSON)
 data/
+
+# 잘못 생성된 빈 임시 파일
+api.txt
 
 # 로그
 npm-debug.log*

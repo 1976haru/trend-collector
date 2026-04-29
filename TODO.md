@@ -1,6 +1,20 @@
 # 📌 TODO
 
-## ✅ 이번 라운드 (PDF 워크플로 안정화 + n시간 직접 + Trends 스텁)
+## ✅ 이번 라운드 (도메인 어댑터 / 재추출 / 부정 PDF / 피드백 안정화)
+
+- [x] **도메인 어댑터** — Naver / Daum / 정책브리핑 / 연합 / 뉴시스 / 뉴스1 / 조선·중앙·동아·한겨레·경향 / KBS·MBC·SBS·JTBC·YTN / 매경·한경·머투·서울경제 / 인터넷언론 등 35+ 도메인의 본문 셀렉터 우선 적용. 없으면 기존 휴리스틱 fallback.
+- [x] **lazy-load 이미지 추출** — `data-src / data-original / data-lazy-src / data-actualsrc / data-srcset / srcset` 모두 처리. 절대 URL 변환. data: URI 제외.
+- [x] **이미지 메타 확장** — `og:image` + `twitter:image` 둘 다 후보로.
+- [x] **추출 품질 라벨** — `extractionMethod` (adapter/generic/heuristic/fetch-error) + `extractionQuality` (success/partial/fallback/failed) + `originalUrl` / `resolvedUrl` 분리.
+- [x] **재추출 API** — `POST /api/reports/:id/reextract` (전체 또는 `failedOnly`), `POST /api/reports/:id/articles/:articleId/reextract`. ReportDetail 우상단 "🔄 실패 N건 재추출" 버튼 + 단일 기사 "🔄 이 기사 재추출" 버튼.
+- [x] **부정 이슈 전용 PDF** — `/pdf/download?filter=negative` 로 부정/긴급/주의 만 추린 PDF. ReportDetail 액션바에 빨간 "🚨 부정 PDF" 버튼.
+- [x] **4-카드 요약** — 총 보도 / 부정 이슈(%) / 본문 추출률(%) / 대응 필요(긴급 N) — 색상 구분.
+- [x] **PDF 품질 바** — 본문 추출 N/M (%), 이미지 포함 N/M, 실패 N건 + 재추출 액션.
+- [x] **실패 전용 보기 모드** — 보기 모드 토글에 "⚠️ 실패만" 추가 (실패가 0건이면 비활성).
+- [x] **실패 기사 강조** — "🔗 원문 보기" 파란 버튼 + 단일 재추출 버튼.
+- [x] **기능개선 제안 안정화** — `FEEDBACK_TO_EMAIL` 기본값 `hsuhyun77@naver.com` (코드 + .env + render.yaml). SMTP 미설정 시에도 `data/feedback.json` 에 영구 저장 + 사용자에게 안내.
+
+## ✅ 직전 라운드 (PDF 워크플로 안정화 + n시간 직접 + Trends 스텁)
 
 - [x] **PDF fetch + blob** — 클라이언트가 응답을 검증(content-type, %PDF 매직)하고 오류 시 화면 박스 + HTML 디버그 링크 노출.
 - [x] **PDF preview / download 분리** — 미리보기는 `window.open(blob)`, 다운로드는 `<a download>` 자동 트리거.

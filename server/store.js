@@ -101,6 +101,19 @@ export async function loadReport(id) {
   return JSON.parse(txt);
 }
 
+// ── 기능개선 제안 영구 저장 ──────────────────
+export async function appendFeedback(entry) {
+  await ensureDirs();
+  const file = path.join(DATA_DIR, 'feedback.json');
+  let arr = [];
+  try { arr = JSON.parse(await fs.readFile(file, 'utf8')); if (!Array.isArray(arr)) arr = []; } catch {}
+  arr.push(entry);
+  // 최근 1000건 유지
+  if (arr.length > 1000) arr = arr.slice(-1000);
+  await fs.writeFile(file, JSON.stringify(arr, null, 2), 'utf8');
+  return arr.length;
+}
+
 export async function listReports({ limit = 50 } = {}) {
   await ensureDirs();
   const files = await fs.readdir(REPORTS_DIR);

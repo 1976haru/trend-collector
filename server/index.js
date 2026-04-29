@@ -9,8 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
-import { loadConfig, saveConfig, listReports, loadReport, saveReport } from './store.js';
-import { runCollection } from './collector.js';
+import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback } from './store.js';
+import { runCollection, reextractReport } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
@@ -73,20 +73,10 @@ app.use('/api/auth', authRouter);
 
 // ── 무인증 — 기능 개선 제안 ──────────────────
 // (보호된 라우터(api) 보다 먼저 등록해야 한다)
+const DEFAULT_FEEDBACK_TO = 'hsuhyun77@naver.com';
 app.post('/api/feedback', async (req, res) => {
-  if (!smtpConfigured()) {
-    return res.status(503).json({
-      ok: false,
-      error: '메일 발송이 설정되지 않았습니다. 관리자에게 SMTP 설정을 요청하세요.',
-    });
-  }
-  const to = process.env.FEEDBACK_TO_EMAIL;
-  if (!to) {
-    return res.status(503).json({
-      ok: false,
-      error: 'FEEDBACK_TO_EMAIL 환경변수가 설정되지 않았습니다.',
-    });
-  }
+  const to = process.env.FEEDBACK_TO_EMAIL || DEFAULT_FEEDBACK_TO;
+  const smtpOk = smtpConfigured();
   const b = req.body || {};
   for (const k of ['title', 'content']) {
     if (!b[k] || String(b[k]).trim().length === 0) {
@@ -138,12 +128,38 @@ app.post('/api/feedback', async (req, res) => {
       </div>
     </div>
   `;
+  // 메일 발송 시도 + JSON 영구 저장 (실패해도 저장은 진행)
+  let mailSent = false, mailError = null;
+  if (smtpOk) {
+    try {
+      await sendMail({ to, subject, text, html });
+      mailSent = true;
+    } catch (e) {
+      console.error('[feedback] send error:', e.message);
+      mailError = e.message;
+    }
+  } else {
+    mailError = 'SMTP 환경변수 미설정 — 서버에 저장만 됩니다.';
+  }
+
   try {
-    await sendMail({ to, subject, text, html });
-    res.json({ ok: true });
+    const total = await appendFeedback({ ...data, mailSent, mailError });
+    if (mailSent) {
+      res.json({ ok: true, savedCount: total, mailSent: true, to });
+    } else {
+      // SMTP 미설정 / 발송 실패 — 저장은 됐다는 사실은 안내
+      res.status(200).json({
+        ok: true,
+        mailSent: false,
+        savedCount: total,
+        warning: smtpOk
+          ? '메일 발송에 실패했습니다. 서버에는 저장되었습니다. SMTP 설정을 확인하세요.'
+          : 'SMTP 가 설정되지 않아 메일은 발송되지 않았으나 서버에 저장되었습니다.',
+      });
+    }
   } catch (e) {
-    console.error('[feedback] send error:', e.message);
-    res.status(500).json({ ok: false, error: '메일 발송에 실패했습니다. 관리자에게 문의하세요.' });
+    console.error('[feedback] save error:', e.message);
+    res.status(500).json({ ok: false, error: '제안 저장에 실패했습니다.' });
   }
 });
 
@@ -229,6 +245,28 @@ api.get('/reports/:id', async (req, res) => {
   }
 });
 
+// 본문/이미지 재추출 (전체 또는 실패 기사만)
+api.post('/reports/:id/reextract', async (req, res) => {
+  try {
+    const { failedOnly } = req.body || {};
+    const r = await reextractReport(req.params.id, { failedOnly: !!failedOnly });
+    res.json({ ok: true, reextracted: r.reextracted, report: r.report });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 단일 기사 재추출
+api.post('/reports/:id/articles/:articleId/reextract', async (req, res) => {
+  try {
+    const r = await reextractReport(req.params.id, { articleId: req.params.articleId });
+    if (!r.reextracted) return res.status(404).json({ error: 'article not found in report' });
+    res.json({ ok: true, report: r.report });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 메일 발송 (PDF 첨부 옵션 지원)
 api.post('/reports/:id/email', async (req, res) => {
   if (!smtpConfigured()) return res.status(400).json({ error: 'SMTP 환경변수가 설정되지 않았습니다.' });
@@ -284,17 +322,27 @@ app.get('/api/reports/:id/html', requireAuth, async (req, res) => {
 });
 
 // ── 공통: 리포트 ID 로 PDF 버퍼 생성 ───────────
-async function generatePdfFor(id) {
-  const report  = await loadReport(id);
+async function generatePdfFor(id, opts = {}) {
+  const orig = await loadReport(id);
+  let report = orig;
+  let suffix = '';
+  if (opts.filter === 'negative') {
+    // 부정 / 긴급·주의 만 필터링한 리포트로 재구성
+    const keep = (orig.articles || []).filter(a =>
+      a.sentiment?.label === '부정' || a.priority === '긴급' || a.priority === '주의'
+    );
+    report = { ...orig, articles: keep, title: (orig.title || '') + ' (부정 이슈)' };
+    suffix = '-negative';
+  }
   const buf     = await htmlToPdf(renderReportHtml(report));
   const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
-  return { buf, fileName: `trend-report-${dateStr}.pdf` };
+  return { buf, fileName: `trend-report-${dateStr}${suffix}.pdf` };
 }
 
 // ── 리포트 PDF — 미리보기 (inline) ──────────────
 app.get('/api/reports/:id/pdf/preview', requireAuth, async (req, res) => {
   try {
-    const { buf, fileName } = await generatePdfFor(req.params.id);
+    const { buf, fileName } = await generatePdfFor(req.params.id, { filter: req.query.filter });
     res.set('Content-Type',        'application/pdf');
     res.set('Content-Disposition', `inline; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.set('Cache-Control',       'no-store');
@@ -310,7 +358,7 @@ app.get('/api/reports/:id/pdf/preview', requireAuth, async (req, res) => {
 // ── 리포트 PDF — 다운로드 (attachment) ──────────
 app.get('/api/reports/:id/pdf/download', requireAuth, async (req, res) => {
   try {
-    const { buf, fileName } = await generatePdfFor(req.params.id);
+    const { buf, fileName } = await generatePdfFor(req.params.id, { filter: req.query.filter });
     res.set('Content-Type',        'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.set('Cache-Control',       'no-store');

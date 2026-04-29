@@ -117,6 +117,13 @@ export default function App() {
               report={rep.current}
               onClose={() => setDetailId(null)}
               onEmail={sendEmail}
+              onReportRefresh={async (updated) => {
+                if (updated) {
+                  // 재추출 직후 서버가 반환한 최신 리포트로 즉시 화면 갱신 + 목록 새로고침
+                  await rep.open(updated.id);
+                  await rep.refresh();
+                }
+              }}
               sending={sending === detailId}
             />
           ) : (

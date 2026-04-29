@@ -1,26 +1,94 @@
 // ─────────────────────────────────────────────
-// articleExtractor.js — URL 에서 본문 추출
-// 공공기관 내부 업무용. cheerio + 휴리스틱.
-// Google News 의 인코딩된 URL 은 Puppeteer 로 실제 기사 URL 로 해석한 뒤 cheerio 로 본문 추출.
+// articleExtractor.js — URL 에서 본문 + 이미지 추출
+// 공공기관 내부 업무용. 도메인별 어댑터 + 휴리스틱 폴백.
+// Google News / Naver redirect 는 Puppeteer 로 실제 URL 해석.
 // ─────────────────────────────────────────────
 
 import * as cheerio from 'cheerio';
 import { ensureBrowser } from './pdfGenerator.js';
 
-const TIMEOUT_MS  = 8000;
-const MAX_BYTES   = 2_000_000;        // 2MB 이상 페이지는 잘라냄
-const USER_AGENT  = 'Mozilla/5.0 (compatible; TrendCollector/1.0; +internal-use)';
-const MAX_BODY_LEN = 12_000;          // PDF 부담을 덜기 위한 본문 글자수 상한
+const TIMEOUT_MS   = 9000;
+const MAX_BYTES    = 2_500_000;
+const USER_AGENT   = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const MAX_BODY_LEN = 12_000;
 
-// 본문 후보 셀렉터 — 우선순위 순.
-const CONTENT_SELECTORS = [
+// ── 도메인별 본문 셀렉터 (우선순위 1) ──────────
+const DOMAIN_ADAPTERS = {
+  // Naver 뉴스
+  'n.news.naver.com':   { selectors: ['#dic_area', '#newsct_article', '#articeBody', '#articleBodyContents'], leadImg: ['meta[property="og:image"]'] },
+  'news.naver.com':     { selectors: ['#dic_area', '#newsct_article', '#articleBody'], leadImg: ['meta[property="og:image"]'] },
+  // Daum 뉴스
+  'v.daum.net':         { selectors: ['[data-cloud-area="article"]', '#harmonyContainer', '.article_view'], leadImg: ['meta[property="og:image"]'] },
+  'm.daum.net':         { selectors: ['[data-cloud-area="article"]', '.article_view'], leadImg: ['meta[property="og:image"]'] },
+  // 정부 정책브리핑
+  'www.korea.kr':       { selectors: ['#contents .articles_content', '.article_content', '#txt', '.cont_left'], leadImg: ['meta[property="og:image"]', '.thumbnail img'] },
+  'm.korea.kr':         { selectors: ['.article_content', '#txt'], leadImg: ['meta[property="og:image"]'] },
+  // 통신사
+  'yna.co.kr':          { selectors: ['#articleWrap', '.story-news', '[itemprop="articleBody"]', '.article'] },
+  'yonhapnews.co.kr':   { selectors: ['#articleWrap', '.story-news'] },
+  'newsis.com':         { selectors: ['.viewer', '#content article', '.cnt_view'] },
+  'news1.kr':           { selectors: ['.detail.read', '.article-body', '#articleBody'] },
+  // 중앙 일간지
+  'chosun.com':         { selectors: ['section[class*="article-body"]', '#news_body_id', '.par'] },
+  'biz.chosun.com':     { selectors: ['section[class*="article-body"]'] },
+  'joongang.co.kr':     { selectors: ['#article_body', '[data-id="article-body"]', '.article_body'] },
+  'donga.com':          { selectors: ['.article_body', '#article_txt', '[itemprop="articleBody"]'] },
+  'hani.co.kr':         { selectors: ['.article-text', '#contents-text', '[class*="article-body"]'] },
+  'khan.co.kr':         { selectors: ['.art_body', '#articleBody', '.art_cont'] },
+  'hankookilbo.com':    { selectors: ['.article-body', '#article-view-content'] },
+  'kmib.co.kr':         { selectors: ['#articleBody'] },
+  'munhwa.com':         { selectors: ['#News_content', '.news_content'] },
+  'segye.com':          { selectors: ['#article_txt', '.viewBox2'] },
+  'seoul.co.kr':        { selectors: ['.viewContent', '#atic_txt1'] },
+  // 방송
+  'ytn.co.kr':          { selectors: ['#CmAdContent', '.paragraph', '.article'] },
+  'kbs.co.kr':          { selectors: ['.detail-body', '#cont_newstext', '.kbsArticleView'] },
+  'imbc.com':           { selectors: ['#content .news_txt', '.news-content', '#news_txt'] },
+  'sbs.co.kr':          { selectors: ['.text_area', '.main_text', '#mainTextSection'] },
+  'jtbc.co.kr':         { selectors: ['.article_content', '#articlebody'] },
+  // 경제
+  'mk.co.kr':           { selectors: ['#article_body', '.news_cnt_detail_wrap'] },
+  'hankyung.com':       { selectors: ['#articletxt', '.article-body'] },
+  'mt.co.kr':           { selectors: ['#textBody', '.view_text'] },
+  'edaily.co.kr':       { selectors: ['.news_body'] },
+  'sedaily.com':        { selectors: ['.article_view', '.view_con'] },
+  'fnnews.com':         { selectors: ['#article_content', '.cont'] },
+  'asiae.co.kr':        { selectors: ['.view_txt', '#txt_area'] },
+  'ajunews.com':        { selectors: ['.article_view', '#articleBody'] },
+  'heraldcorp.com':     { selectors: ['#articleText', '.article_view_section'] },
+  // 인터넷
+  'ohmynews.com':       { selectors: ['.art_body', '#articleView'] },
+  'pressian.com':       { selectors: ['.article-body', '#article_body'] },
+  'mediatoday.co.kr':   { selectors: ['#article-view-content-div', '.article-body'] },
+  'dailian.co.kr':      { selectors: ['#article-text', '.article_body'] },
+  'kukinews.com':       { selectors: ['.article_view', '#article-view-content-div'] },
+  'nocutnews.co.kr':    { selectors: ['#pnlContent', '.viewContent'] },
+  'inews24.com':        { selectors: ['.article-text', '#articleBody'] },
+};
+
+// 노이즈 셀렉터.
+const NOISE_SELECTORS = [
+  'script', 'style', 'noscript', 'iframe', 'svg',
+  'nav', 'footer', 'aside', 'header',
+  '.ad', '.ads', '.advertisement', '[class*="advert"]', '[id*="advert"]',
+  '[class*="promotion"]', '[class*="banner"]',
+  '[class*="related"]', '[class*="recommend"]', '[class*="popular"]',
+  '[class*="newsletter"]', '[class*="subscribe"]',
+  '[class*="reporter"]', '[class*="byline"]', '[class*="profile"]',
+  '[class*="comment"]', '[id*="comment"]',
+  '[class*="share"]', '[class*="sns"]',
+  '.copyright', '[class*="copyright"]',
+  '[class*="cookie"]', '[id*="cookie"]',
+];
+
+const FALLBACK_SELECTORS = [
   'article[itemprop="articleBody"]',
   '[itemprop="articleBody"]',
   'article#articleBody',
   '#articleBody',
   '#articleBodyContents',
-  '#dic_area',                  // naver
-  '#newsct_article',            // naver newer layout
+  '#dic_area',
+  '#newsct_article',
   '#contents',
   '#content',
   '.article-body',
@@ -32,24 +100,21 @@ const CONTENT_SELECTORS = [
   'article',
 ];
 
-// 제거할 노이즈 셀렉터.
-const NOISE_SELECTORS = [
-  'script', 'style', 'noscript', 'iframe',
-  'nav', 'footer', 'aside',
-  '.ad', '.ads', '.advertisement', '[class*="advert"]', '[id*="advert"]',
-  '[class*="promotion"]',
-  '[class*="related"]', '[class*="recommend"]', '[class*="popular"]',
-  '[class*="newsletter"]', '[class*="subscribe"]',
-  '[class*="reporter"]', '[class*="byline"]', '[class*="profile"]',
-  '[class*="comment"]', '[id*="comment"]',
-  '[class*="share"]', '[class*="sns"]',
-  'figure[role="figure"]',
-  '.copyright', '[class*="copyright"]',
-  // GDPR / 쿠키 배너
-  '[class*="cookie"]', '[id*="cookie"]',
-];
+function getHost(u = '') {
+  try { return new URL(u).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; }
+}
 
-const FOLLOW_REDIRECT_MAX = 4;
+function findAdapter(url) {
+  const host = getHost(url);
+  if (!host) return null;
+  if (DOMAIN_ADAPTERS[host]) return DOMAIN_ADAPTERS[host];
+  if (DOMAIN_ADAPTERS[`www.${host}`]) return DOMAIN_ADAPTERS[`www.${host}`];
+  // 서브도메인 매칭: news.kbs.co.kr → kbs.co.kr
+  for (const key of Object.keys(DOMAIN_ADAPTERS)) {
+    if (host === key || host.endsWith('.' + key)) return DOMAIN_ADAPTERS[key];
+  }
+  return null;
+}
 
 async function fetchHtml(url) {
   const ctrl = new AbortController();
@@ -68,14 +133,12 @@ async function fetchHtml(url) {
     const ct = res.headers.get('content-type') || '';
     if (!/text\/html|application\/xhtml/i.test(ct)) throw new Error(`unsupported ${ct || 'no content-type'}`);
 
-    // 안전 차단: 너무 큰 페이지는 자르기
     const reader = res.body?.getReader?.();
     if (!reader) {
       const text = await res.text();
       return { url: res.url, html: text.slice(0, MAX_BYTES) };
     }
-    const chunks = [];
-    let total = 0;
+    const chunks = []; let total = 0;
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -93,7 +156,6 @@ async function fetchHtml(url) {
 }
 
 function cleanText(s = '') {
-  // entity decode 후 raw 태그 제거 (이중 인코딩 방어)
   let v = String(s)
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
@@ -101,55 +163,67 @@ function cleanText(s = '') {
   return v.replace(/\s+/g, ' ').trim();
 }
 
-// 절대 URL 변환
 function absUrl(u, base) {
   if (!u) return '';
   try { return new URL(u, base).toString(); } catch { return u; }
 }
 
-// 메타 / 추가 메타데이터 추출 (제거 전에 수집)
+// lazy-load 속성까지 모두 시도
+function pickImgSrc($, el) {
+  const $img = $(el);
+  const candidates = [
+    $img.attr('src'),
+    $img.attr('data-src'),
+    $img.attr('data-original'),
+    $img.attr('data-lazy-src'),
+    $img.attr('data-lazy'),
+    $img.attr('data-actualsrc'),
+    $img.attr('data-srcset')?.split(/\s*,\s*/)[0]?.split(/\s+/)[0],
+    $img.attr('srcset')?.split(/\s*,\s*/)[0]?.split(/\s+/)[0],
+  ];
+  for (const c of candidates) if (c && !/^data:/i.test(c)) return c;
+  return '';
+}
+
+// 메타 추출 (제거 전에)
 function extractMeta($, base) {
   const meta = (sel) => $(sel).attr('content') || '';
-  const ogImage  = meta('meta[property="og:image"]')        || meta('meta[name="og:image"]')        || meta('meta[property="og:image:url"]');
-  const ogTitle  = meta('meta[property="og:title"]');
-  const ogDesc   = meta('meta[property="og:description"]')  || meta('meta[name="description"]');
-  const author   = meta('meta[name="author"]')              || meta('meta[property="article:author"]');
-  const published = meta('meta[property="article:published_time"]') || meta('meta[name="pubdate"]');
+  const ogImage    = meta('meta[property="og:image"]')      || meta('meta[name="og:image"]')      || meta('meta[property="og:image:url"]');
+  const twImage    = meta('meta[name="twitter:image"]')     || meta('meta[name="twitter:image:src"]');
+  const ogTitle    = meta('meta[property="og:title"]');
+  const ogDesc     = meta('meta[property="og:description"]')|| meta('meta[name="description"]');
+  const author     = meta('meta[name="author"]')            || meta('meta[property="article:author"]');
+  const published  = meta('meta[property="article:published_time"]') || meta('meta[name="pubdate"]');
 
-  // 기자명 휴리스틱 (한국 매체 흔한 패턴)
   let reporter = author;
   if (!reporter) {
-    const candidates = [
-      '.byline', '.reporter', '[class*="reporter"]', '[class*="byline"]',
-      '.author', '[class*="author"]',
-    ];
-    for (const sel of candidates) {
+    for (const sel of ['.byline', '.reporter', '[class*="reporter"]', '[class*="byline"]', '.author', '[class*="author"]']) {
       const t = $(sel).first().text().trim();
       if (t && t.length < 60) { reporter = t; break; }
     }
   }
-
   return {
-    leadImage: absUrl(ogImage, base),
-    metaTitle: ogTitle,
-    metaDesc:  ogDesc,
-    reporter:  reporter ? reporter.replace(/\s+/g, ' ').replace(/^by\s+/i, '').trim() : '',
+    leadImage:     absUrl(ogImage || twImage, base),
+    metaTitle:     ogTitle,
+    metaDesc:      ogDesc,
+    reporter:      reporter ? reporter.replace(/\s+/g, ' ').replace(/^by\s+/i, '').trim() : '',
     publishedMeta: published,
   };
 }
 
-// 본문 영역 안의 이미지 추출 (최대 3개, 본문 외 광고는 제외)
+// 본문 영역에서 이미지 (lazy-load 포함)
 function extractInlineImages(node, $, base, max = 3) {
   const imgs = [];
+  const seen = new Set();
   node.find('img').each((_, el) => {
     if (imgs.length >= max) return false;
-    const $img = $(el);
-    const src = $img.attr('src') || $img.attr('data-src') || $img.attr('data-original') || $img.attr('data-lazy-src');
+    const src = pickImgSrc($, el);
     if (!src) return;
-    if (/^data:/i.test(src)) return;                       // 인라인 base64 제외
     const url = absUrl(src, base);
     if (!/^https?:\/\//i.test(url)) return;
-    // 트래킹 픽셀 등 작은 이미지 제외
+    if (seen.has(url)) return;
+    seen.add(url);
+    const $img = $(el);
     const w = Number($img.attr('width') || 0);
     const h = Number($img.attr('height') || 0);
     if (w && w < 80) return;
@@ -157,9 +231,7 @@ function extractInlineImages(node, $, base, max = 3) {
 
     let caption = '';
     const $fig = $img.closest('figure');
-    if ($fig.length) {
-      caption = $fig.find('figcaption').first().text().trim();
-    }
+    if ($fig.length) caption = $fig.find('figcaption').first().text().trim();
     if (!caption) {
       const $next = $img.next();
       if ($next.length && /caption|cap|figcaption/i.test($next.attr('class') || '')) {
@@ -171,15 +243,11 @@ function extractInlineImages(node, $, base, max = 3) {
   return imgs;
 }
 
-function extractFromHtml(html, base = '') {
+function extractFromHtml(html, base = '', adapter = null) {
   const $ = cheerio.load(html, { decodeEntities: true });
-
-  // 메타데이터 (노이즈 제거 전에 수집)
   const meta = extractMeta($, base);
 
-  // 노이즈 제거
   for (const sel of NOISE_SELECTORS) $(sel).remove();
-  // SNS / 추천 등 한글 라벨로만 잡히는 영역
   $('[class]').each((_, el) => {
     const cls = ($(el).attr('class') || '').toLowerCase();
     if (/sns|share|recom|related|trend|ranking|copyright|reporter|byline|profile|sponsor/.test(cls)) {
@@ -187,16 +255,31 @@ function extractFromHtml(html, base = '') {
     }
   });
 
-  // 본문 후보 선정
+  // 1) 도메인별 어댑터
   let bestNode = null;
   let bestScore = 0;
-  for (const sel of CONTENT_SELECTORS) {
-    const node = $(sel).first();
-    if (!node.length) continue;
-    const len = cleanText(node.text()).length;
-    if (len > bestScore) { bestScore = len; bestNode = node; }
+  let method = 'fallback';
+
+  if (adapter && Array.isArray(adapter.selectors)) {
+    for (const sel of adapter.selectors) {
+      const node = $(sel).first();
+      if (!node.length) continue;
+      const len = cleanText(node.text()).length;
+      if (len > bestScore) { bestScore = len; bestNode = node; method = 'adapter'; }
+    }
   }
-  // 위 셀렉터로 못 찾으면 본문 후보를 <p> 길이 합으로 휴리스틱 평가
+
+  // 2) 일반 fallback 셀렉터
+  if (!bestNode || bestScore < 200) {
+    for (const sel of FALLBACK_SELECTORS) {
+      const node = $(sel).first();
+      if (!node.length) continue;
+      const len = cleanText(node.text()).length;
+      if (len > bestScore) { bestScore = len; bestNode = node; method = 'generic'; }
+    }
+  }
+
+  // 3) <p> 밀도 휴리스틱
   if (!bestNode || bestScore < 200) {
     let bestP = null, bestPLen = 0;
     $('div, section, main').each((_, el) => {
@@ -206,27 +289,19 @@ function extractFromHtml(html, base = '') {
       const len = ps.toArray().reduce((s, p) => s + cleanText($(p).text()).length, 0);
       if (len > bestPLen) { bestPLen = len; bestP = node; }
     });
-    if (bestP && bestPLen > bestScore) { bestNode = bestP; bestScore = bestPLen; }
+    if (bestP && bestPLen > bestScore) { bestNode = bestP; bestScore = bestPLen; method = 'heuristic'; }
   }
 
   if (!bestNode || bestScore < 100) {
     return {
       contentText: '', contentHtml: '', extracted: false, reason: 'no-body-candidate',
+      extractionMethod: method, extractionQuality: 'failed',
       leadImage: meta.leadImage, reporter: meta.reporter, publishedMeta: meta.publishedMeta,
       images: meta.leadImage ? [{ url: meta.leadImage, caption: '' }] : [],
     };
   }
 
-  // 본문 영역 이미지 (최대 3개)
-  const inlineImages = extractInlineImages(bestNode, $, base);
-  const allImages = [];
-  if (meta.leadImage) allImages.push({ url: meta.leadImage, caption: '' });
-  for (const img of inlineImages) {
-    if (!allImages.some(x => x.url === img.url)) allImages.push(img);
-    if (allImages.length >= 3) break;
-  }
-
-  // 본문 텍스트 — <p>/<br> 줄바꿈 보존
+  // 본문 텍스트
   const paragraphs = [];
   bestNode.find('p, h2, h3, li').each((_, el) => {
     const t = cleanText($(el).text());
@@ -236,59 +311,74 @@ function extractFromHtml(html, base = '') {
   if (!text) text = cleanText(bestNode.text());
   text = text.slice(0, MAX_BODY_LEN);
 
-  // 안전한 HTML — 인라인 스타일/이벤트 제거, <a> 만 남김
+  // 안전한 HTML
   bestNode.find('*').each((_, el) => {
     const $el = $(el);
     const tag = el.tagName?.toLowerCase();
-    if (!['p', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'a', 'strong', 'em', 'br', 'blockquote'].includes(tag)) {
+    if (!['p', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'a', 'strong', 'em', 'br', 'blockquote', 'figure', 'figcaption', 'img'].includes(tag)) {
       $el.replaceWith($el.text());
       return;
     }
-    // 모든 속성 제거 후 a[href] 만 복원
-    const href = tag === 'a' ? $el.attr('href') : null;
-    for (const attr of Object.keys($el.attr() || {})) $el.removeAttr(attr);
-    if (href && /^https?:\/\//i.test(href)) {
-      $el.attr('href', href);
-      $el.attr('target', '_blank');
-      $el.attr('rel', 'noopener noreferrer');
+    if (tag === 'a') {
+      const href = $el.attr('href');
+      for (const attr of Object.keys($el.attr() || {})) $el.removeAttr(attr);
+      if (href && /^https?:\/\//i.test(href)) {
+        $el.attr('href', href).attr('target', '_blank').attr('rel', 'noopener noreferrer');
+      }
+    } else if (tag === 'img') {
+      // lazy 속성을 src 로 승격
+      const src = pickImgSrc($, el);
+      for (const attr of Object.keys($el.attr() || {})) $el.removeAttr(attr);
+      if (src && /^https?:\/\//i.test(absUrl(src, base))) {
+        $el.attr('src', absUrl(src, base)).attr('referrerpolicy', 'no-referrer').attr('loading', 'lazy');
+      } else {
+        $el.replaceWith('');
+      }
+    } else {
+      for (const attr of Object.keys($el.attr() || {})) $el.removeAttr(attr);
     }
   });
   let html2 = bestNode.html() || '';
   if (html2.length > MAX_BODY_LEN * 1.5) html2 = html2.slice(0, MAX_BODY_LEN * 1.5) + '…';
 
+  // 이미지 — 본문 영역 + meta 합치기
+  const inlineImages = extractInlineImages(bestNode, $, base);
+  const allImages = [];
+  if (meta.leadImage) allImages.push({ url: meta.leadImage, caption: '' });
+  for (const img of inlineImages) {
+    if (!allImages.some(x => x.url === img.url)) allImages.push(img);
+    if (allImages.length >= 4) break;
+  }
+
+  // 추출 품질 라벨
+  const quality = bestScore >= 600 ? 'success'
+                : bestScore >= 200 ? 'partial'
+                : 'fallback';
+
   return {
     contentText: text, contentHtml: html2, extracted: true, reason: '',
+    extractionMethod: method,
+    extractionQuality: quality,
     leadImage: meta.leadImage, reporter: meta.reporter, publishedMeta: meta.publishedMeta,
     images: allImages,
   };
 }
 
-// Google News 의 인코딩된 URL 인지 여부.
-// 형태: https://news.google.com/(rss/)?articles/CBMi...
+// Google News 의 인코딩된 URL 인지 여부
 function isGoogleNewsUrl(u = '') {
   return /^https?:\/\/news\.google\.com\/(rss\/)?articles\//i.test(u);
 }
 
-/**
- * Google News URL 을 실제 기사 URL 로 해석한다.
- * Puppeteer 로 페이지를 열고 JavaScript redirect 가 일어날 때까지 대기.
- */
 async function resolveGoogleNewsUrl(url, { timeoutMs = 10_000 } = {}) {
   const browser = await ensureBrowser();
   const page    = await browser.newPage();
   try {
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36');
+    await page.setUserAgent(USER_AGENT);
     await page.setJavaScriptEnabled(true);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    // JS redirect 발생 대기
     try {
-      await page.waitForFunction(
-        () => !location.hostname.includes('news.google.com'),
-        { timeout: timeoutMs }
-      );
-    } catch {
-      /* 일부 매체는 redirect 가 안 일어나거나 매우 늦음 — 현재 URL 로 진행 */
-    }
+      await page.waitForFunction(() => !location.hostname.includes('news.google.com'), { timeout: timeoutMs });
+    } catch { /* redirect 가 늦으면 현재 URL 로 진행 */ }
     return page.url();
   } finally {
     try { await page.close(); } catch {}
@@ -297,31 +387,44 @@ async function resolveGoogleNewsUrl(url, { timeoutMs = 10_000 } = {}) {
 
 /**
  * 단일 URL 의 본문을 추출한다.
+ * 반환 필드:
+ *   originalUrl, resolvedUrl, contentText, contentHtml,
+ *   extracted, extractionMethod, extractionQuality, extractionError,
+ *   leadImage, reporter, publishedMeta, images
  */
 export async function extractArticle(url) {
-  if (!/^https?:\/\//i.test(url || '')) {
-    return { contentText: '', contentHtml: '', extracted: false, extractionError: 'invalid-url' };
+  const originalUrl = url || '';
+  if (!/^https?:\/\//i.test(originalUrl)) {
+    return { originalUrl, resolvedUrl: '', contentText: '', contentHtml: '', extracted: false,
+             extractionMethod: 'none', extractionQuality: 'failed', extractionError: 'invalid-url' };
   }
-  try {
-    let target = url;
-    let resolved;
-    if (isGoogleNewsUrl(url)) {
-      try {
-        resolved = await resolveGoogleNewsUrl(url);
-        if (resolved && !isGoogleNewsUrl(resolved)) target = resolved;
-      } catch (e) {
-        // resolve 실패 — 원래 URL 로 진행
-      }
-    }
 
+  let target = originalUrl;
+  let resolvedUrl;
+  if (isGoogleNewsUrl(originalUrl)) {
+    try {
+      resolvedUrl = await resolveGoogleNewsUrl(originalUrl);
+      if (resolvedUrl && !isGoogleNewsUrl(resolvedUrl)) target = resolvedUrl;
+    } catch { /* resolve 실패 — 원본 시도 */ }
+  }
+
+  try {
     const { html, url: finalUrl } = await fetchHtml(target);
-    const r = extractFromHtml(html, finalUrl);
-    if (!r.extracted) {
-      return { ...r, resolvedUrl: resolved || target, extractionError: r.reason };
-    }
-    return { ...r, resolvedUrl: resolved || target };
+    const adapter = findAdapter(finalUrl) || findAdapter(target);
+    const r = extractFromHtml(html, finalUrl, adapter);
+    return {
+      originalUrl,
+      resolvedUrl: resolvedUrl || finalUrl,
+      ...r,
+      extractionError: r.extracted ? '' : (r.reason || ''),
+    };
   } catch (e) {
-    return { contentText: '', contentHtml: '', extracted: false, extractionError: e.message || String(e) };
+    return {
+      originalUrl, resolvedUrl: resolvedUrl || target,
+      contentText: '', contentHtml: '', extracted: false,
+      extractionMethod: 'fetch-error', extractionQuality: 'failed',
+      extractionError: e.message || String(e),
+    };
   }
 }
 

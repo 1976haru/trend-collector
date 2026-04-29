@@ -429,7 +429,23 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   const extractedCount = processed.filter(a => a.extracted).length;
   const extractionFailed = processed
     .filter(a => !a.extracted)
-    .map(a => ({ id: a.id, title: a.title, url: a.url, error: a.extractionError }));
+    .map(a => ({ id: a.id, title: a.title, url: a.url, error: a.extractionError, source: a.source }));
+
+  // 7.6) 본문/이미지 품질 통계
+  const qualityCounts = processed.reduce((m, a) => {
+    const q = a.extractionQuality || (a.extracted ? 'success' : 'failed');
+    m[q] = (m[q] || 0) + 1;
+    return m;
+  }, { success: 0, partial: 0, fallback: 0, failed: 0 });
+  const imageCount = processed.filter(a => (a.images?.length || 0) > 0).length;
+  const extractionStats = {
+    total:      processed.length,
+    extracted:  extractedCount,
+    failed:     processed.length - extractedCount,
+    quality:    qualityCounts,
+    withImage:  imageCount,
+    withoutImage: processed.length - imageCount,
+  };
 
   // 7.7) 부서별 집계 + TOP 부정 / 긍정 / 중립 이슈
   const departmentCounts = countDepartments(processed);
@@ -505,6 +521,7 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     riskLevel,
     extractedCount,
     extractionFailed,
+    extractionStats,                       // 추출 품질/이미지 통계
     includeImages: cfg.includeImages !== false,
 
     // 분류된 이슈
@@ -513,6 +530,64 @@ export async function runCollection({ trigger = 'manual' } = {}) {
 
   await saveReport(report);
   return report;
+}
+
+/**
+ * 기존 리포트의 본문/이미지를 다시 추출한다.
+ * @param {string} id  리포트 ID
+ * @param {Object} opts { failedOnly?: boolean, articleId?: string }
+ */
+export async function reextractReport(id, opts = {}) {
+  const report = await loadReport(id);
+  const articles = report.articles || [];
+  const cfg = await loadConfig();
+
+  let targets;
+  if (opts.articleId) {
+    targets = articles.filter(a => a.id === opts.articleId);
+  } else if (opts.failedOnly) {
+    targets = articles.filter(a => !a.extracted);
+  } else {
+    targets = articles.slice();
+  }
+  if (!targets.length) return { report, reextracted: 0 };
+
+  const refreshed = await extractMany(targets, { limit: 5 });
+
+  // 원본 articles 와 머지 (id 기준)
+  const map = new Map(articles.map(a => [a.id, a]));
+  for (const r of refreshed) {
+    const prev = map.get(r.id) || {};
+    map.set(r.id, { ...prev, ...r });
+  }
+  report.articles = Array.from(map.values());
+
+  // 통계 갱신
+  const extractedCount = report.articles.filter(a => a.extracted).length;
+  const failed = report.articles
+    .filter(a => !a.extracted)
+    .map(a => ({ id: a.id, title: a.title, url: a.url, error: a.extractionError, source: a.source }));
+  const qualityCounts = report.articles.reduce((m, a) => {
+    const q = a.extractionQuality || (a.extracted ? 'success' : 'failed');
+    m[q] = (m[q] || 0) + 1;
+    return m;
+  }, { success: 0, partial: 0, fallback: 0, failed: 0 });
+  const imageCount = report.articles.filter(a => (a.images?.length || 0) > 0).length;
+
+  report.extractedCount   = extractedCount;
+  report.extractionFailed = failed;
+  report.extractionStats  = {
+    total: report.articles.length,
+    extracted: extractedCount,
+    failed: report.articles.length - extractedCount,
+    quality: qualityCounts,
+    withImage: imageCount,
+    withoutImage: report.articles.length - imageCount,
+  };
+  report.lastReextractAt = new Date().toISOString();
+
+  await saveReport(report);
+  return { report, reextracted: targets.length };
 }
 
 // ── 법무부 업무용 보고서 문장 (총평 / 주요 동향 / 대응) ─────

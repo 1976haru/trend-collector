@@ -109,3 +109,22 @@ export function emailReport(id, body = {}) {
 export function submitFeedback(payload) {
   return request('POST', '/api/feedback', payload);
 }
+
+// 본문/이미지 재추출
+export function reextractReport(id, body = {}) {
+  return request('POST', `/api/reports/${encodeURIComponent(id)}/reextract`, body);
+}
+export function reextractArticle(id, articleId) {
+  return request('POST', `/api/reports/${encodeURIComponent(id)}/articles/${encodeURIComponent(articleId)}/reextract`, {});
+}
+
+// 부정 이슈 전용 PDF (filter=negative)
+export async function downloadNegativePdf(id) {
+  const { blob, filename } = await fetchPdfBlob(reportPdfDownloadUrl(id) + '?filter=negative');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return { filename, size: blob.size };
+}
