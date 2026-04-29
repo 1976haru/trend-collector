@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { fmtNow, fmtFull, fmtUntil } from '../../utils/datetime.js';
 
-export default function Header({ schedule, onFeedback }) {
+export default function Header({ schedule, status, onFeedback }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000 * 30);
@@ -13,6 +13,10 @@ export default function Header({ schedule, onFeedback }) {
   }, []);
 
   const auto = schedule?.autoCollect && schedule?.mode !== 'off';
+  const sStyle = status === '긴급' ? { bg: '#fee2e2', fg: '#991b1b', icon: '🚨' }
+               : status === '주의' ? { bg: '#fef3c7', fg: '#92400e', icon: '⚠️' }
+               : status === '안정' ? { bg: '#dcfce7', fg: '#166534', icon: '✅' }
+               : null;
 
   return (
     <header style={S.bar}>
@@ -24,6 +28,11 @@ export default function Header({ schedule, onFeedback }) {
         </div>
       </div>
       <div style={S.right}>
+        {sStyle && (
+          <div style={{ ...S.statusPill, background: sStyle.bg, color: sStyle.fg }}>
+            {sStyle.icon} {status}
+          </div>
+        )}
         <div style={S.clock}>📅 {fmtNow(now)}</div>
         {auto ? (
           <div style={S.next}>
@@ -65,5 +74,9 @@ const S = {
     padding: '6px 11px', minHeight: 32, borderRadius: 7, border: '1px solid rgba(255,255,255,.3)',
     background: 'rgba(255,255,255,.08)', color: 'white', fontSize: 11.5, fontWeight: 600,
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+  },
+  statusPill: {
+    padding: '3px 10px', borderRadius: 12, fontSize: 11.5, fontWeight: 700,
+    whiteSpace: 'nowrap',
   },
 };

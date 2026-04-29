@@ -385,14 +385,53 @@ async function resolveGoogleNewsUrl(url, { timeoutMs = 10_000 } = {}) {
   }
 }
 
+// ── Puppeteer 로 페이지 HTML 가져오기 (fetch 실패 / 자바스크립트 의존 페이지 fallback) ──
+async function fetchHtmlViaPuppeteer(url, { timeoutMs = 15_000 } = {}) {
+  const browser = await ensureBrowser();
+  const page    = await browser.newPage();
+  try {
+    await page.setUserAgent(USER_AGENT);
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.7' });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    // JS 가 본문을 그리는 데 걸리는 시간을 살짝 기다림
+    await new Promise(r => setTimeout(r, 1500));
+    const html = await page.content();
+    return { html, url: page.url() };
+  } finally {
+    try { await page.close(); } catch {}
+  }
+}
+
+// ── 본문 추출 모두 실패 시 원문 페이지 일부를 스크린샷 (data: URI) ──
+async function screenshotPage(url, { timeoutMs = 15_000 } = {}) {
+  const browser = await ensureBrowser();
+  const page    = await browser.newPage();
+  try {
+    await page.setUserAgent(USER_AGENT);
+    await page.setViewport({ width: 1024, height: 1500, deviceScaleFactor: 1 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    await new Promise(r => setTimeout(r, 1800));
+    const buf = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false });
+    return `data:image/jpeg;base64,${Buffer.from(buf).toString('base64')}`;
+  } finally {
+    try { await page.close(); } catch {}
+  }
+}
+
 /**
  * 단일 URL 의 본문을 추출한다.
+ * 폴백 체인:
+ *   1) fetch + cheerio (도메인 어댑터 → generic → heuristic)
+ *   2) Puppeteer page.content() + cheerio (JS 의존 페이지)
+ *   3) 스크린샷 (data: URI 로 PDF 에 임베드 가능)
+ *
  * 반환 필드:
  *   originalUrl, resolvedUrl, contentText, contentHtml,
  *   extracted, extractionMethod, extractionQuality, extractionError,
- *   leadImage, reporter, publishedMeta, images
+ *   leadImage, reporter, publishedMeta, images,
+ *   fallbackScreenshot (data URI, 마지막 fallback 일 때만)
  */
-export async function extractArticle(url) {
+export async function extractArticle(url, { allowPuppeteer = true, allowScreenshot = true } = {}) {
   const originalUrl = url || '';
   if (!/^https?:\/\//i.test(originalUrl)) {
     return { originalUrl, resolvedUrl: '', contentText: '', contentHtml: '', extracted: false,
@@ -408,24 +447,70 @@ export async function extractArticle(url) {
     } catch { /* resolve 실패 — 원본 시도 */ }
   }
 
+  let lastError = '';
+  let finalUrlGuess = target;
+
+  // 1) 일반 fetch + cheerio
   try {
     const { html, url: finalUrl } = await fetchHtml(target);
+    finalUrlGuess = finalUrl;
     const adapter = findAdapter(finalUrl) || findAdapter(target);
     const r = extractFromHtml(html, finalUrl, adapter);
-    return {
-      originalUrl,
-      resolvedUrl: resolvedUrl || finalUrl,
-      ...r,
-      extractionError: r.extracted ? '' : (r.reason || ''),
-    };
+    if (r.extracted) {
+      return {
+        originalUrl,
+        resolvedUrl: resolvedUrl || finalUrl,
+        ...r,
+        extractionError: '',
+      };
+    }
+    lastError = r.reason || 'no-body-candidate';
   } catch (e) {
-    return {
-      originalUrl, resolvedUrl: resolvedUrl || target,
-      contentText: '', contentHtml: '', extracted: false,
-      extractionMethod: 'fetch-error', extractionQuality: 'failed',
-      extractionError: e.message || String(e),
-    };
+    lastError = e.message || String(e);
   }
+
+  // 2) Puppeteer fallback (JavaScript 가 본문을 그리는 페이지)
+  if (allowPuppeteer) {
+    try {
+      const { html, url: finalUrl } = await fetchHtmlViaPuppeteer(target);
+      finalUrlGuess = finalUrl;
+      const adapter = findAdapter(finalUrl) || findAdapter(target);
+      const r = extractFromHtml(html, finalUrl, adapter);
+      if (r.extracted) {
+        return {
+          originalUrl,
+          resolvedUrl: resolvedUrl || finalUrl,
+          ...r,
+          extractionMethod: `puppeteer:${r.extractionMethod}`,
+          extractionError: '',
+        };
+      }
+      lastError = `puppeteer-${r.reason || 'no-body-candidate'}`;
+    } catch (e) {
+      lastError = `puppeteer-${e.message || e}`;
+    }
+  }
+
+  // 3) 스크린샷 fallback — PDF 에 시각적으로 들어가도록 dataURI 반환
+  let fallbackScreenshot = '';
+  if (allowScreenshot) {
+    try {
+      fallbackScreenshot = await screenshotPage(finalUrlGuess);
+    } catch (e) {
+      // 스크린샷도 실패 — 무시
+    }
+  }
+
+  return {
+    originalUrl,
+    resolvedUrl: resolvedUrl || finalUrlGuess,
+    contentText: '', contentHtml: '',
+    extracted: false,
+    extractionMethod: fallbackScreenshot ? 'screenshot' : 'fetch-error',
+    extractionQuality: 'failed',
+    extractionError: lastError,
+    fallbackScreenshot,
+  };
 }
 
 /**

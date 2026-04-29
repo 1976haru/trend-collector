@@ -1,6 +1,17 @@
 # 📌 TODO
 
-## ✅ 이번 라운드 (도메인 어댑터 / 재추출 / 부정 PDF / 피드백 안정화)
+## ✅ 이번 라운드 (실사용 안정화 — fallback 체인 / 신문풍 PDF / 관리자 페이지)
+
+- [x] **본문 추출 fallback 체인** — ① fetch+cheerio (어댑터→generic→heuristic) → ② **Puppeteer 페이지 fetch + 재추출** → ③ **원문 페이지 스크린샷** (data: URI) → ④ RSS 메타데이터로 **synthesizedFallback** 본문 합성. 모든 단계가 실패해도 PDF에 빈 페이지가 발생하지 않음.
+- [x] **신문 페이지 풍 PDF** — 제목 24pt Noto Serif KR + letter-spacing -0.5pt, byline 위·아래 보더, 본문 serif 11pt line-height 1.85, justify+keep-all, 첫 단락 첫글자 강조, lead 이미지 105mm full-width, 스크린샷 fallback 표시 영역.
+- [x] **관리자 페이지 (탭)** — 🛠 관리 탭 추가:
+  - 기능 제안 리스트 (미열람/열람 표시, 읽음 처리 토글)
+  - 도메인별 본문 추출 실패 통계 (최근 30 리포트 집계)
+- [x] **헤더 상태 표시** — 정상/주의/긴급 pill (현재 리포트 또는 최근 리포트의 riskLevel 기반).
+- [x] **listReports 인덱스에 riskLevel** 포함 → 로그인 직후 헤더 상태 즉시 표시.
+- [x] **synthesizedFallback** — 본문 추출 실패 시 RSS 메타로 “대체 본문” 자동 생성 + PDF 안내 박스 표시.
+
+## ✅ 직전 라운드 (도메인 어댑터 / 재추출 / 부정 PDF / 피드백 안정화)
 
 - [x] **도메인 어댑터** — Naver / Daum / 정책브리핑 / 연합 / 뉴시스 / 뉴스1 / 조선·중앙·동아·한겨레·경향 / KBS·MBC·SBS·JTBC·YTN / 매경·한경·머투·서울경제 / 인터넷언론 등 35+ 도메인의 본문 셀렉터 우선 적용. 없으면 기존 휴리스틱 fallback.
 - [x] **lazy-load 이미지 추출** — `data-src / data-original / data-lazy-src / data-actualsrc / data-srcset / srcset` 모두 처리. 절대 URL 변환. data: URI 제외.

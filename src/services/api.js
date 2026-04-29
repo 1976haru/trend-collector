@@ -118,6 +118,11 @@ export function reextractArticle(id, articleId) {
   return request('POST', `/api/reports/${encodeURIComponent(id)}/articles/${encodeURIComponent(articleId)}/reextract`, {});
 }
 
+// 관리자
+export const listFeedback         = ()           => request('GET',   '/api/admin/feedback');
+export const markFeedbackRead     = (id, read=true) => request('PATCH', `/api/admin/feedback/${encodeURIComponent(id)}/read`, { read });
+export const getExtractionStats   = ()           => request('GET',   '/api/admin/extraction-stats');
+
 // 부정 이슈 전용 PDF (filter=negative)
 export async function downloadNegativePdf(id) {
   const { blob, filename } = await fetchPdfBlob(reportPdfDownloadUrl(id) + '?filter=negative');

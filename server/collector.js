@@ -26,6 +26,17 @@ function newId() {
   return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
 }
 
+// 본문 추출 실패 기사를 RSS 메타데이터로 대체 본문 합성
+function synthesizeFallback(a) {
+  const lines = [];
+  if (a.title)   lines.push(`■ 제목: ${a.title}`);
+  if (a.source)  lines.push(`■ 매체: ${a.source}${a.date ? `  ·  ${a.date}` : ''}`);
+  if (a.summary) lines.push('', '■ RSS 요약', a.summary);
+  if (a.url)     lines.push('', '■ 원문 링크', a.url);
+  lines.push('', '※ 자동 본문 추출에 실패하여 RSS 메타데이터로 대체된 항목입니다. 원문 페이지 스크린샷이 함께 제공되는 경우 PDF 의 해당 기사 섹션에서 확인할 수 있습니다.');
+  return lines.join('\n');
+}
+
 async function fetchRss(keyword) {
   const url = GOOGLE_NEWS + encodeURIComponent(keyword);
   const res = await fetch(url, {
@@ -379,6 +390,13 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   // 3) 본문 추출 (병렬 5)  — 공공기관 내부 업무용으로만 사용.
   if (cfg.extractContent !== false) {
     processed = await extractMany(processed, { limit: 5 });
+    // 실패 기사 → RSS 메타데이터로 대체 본문 + (스크린샷 있으면 보존)
+    for (const a of processed) {
+      if (!a.extracted) {
+        a.synthesizedFallback = synthesizeFallback(a);
+        a.extractionQuality = a.fallbackScreenshot ? 'fallback' : 'failed';
+      }
+    }
   }
 
   // 4) 감정 분석 — 본문이 추출된 기사는 본문도 분석에 사용

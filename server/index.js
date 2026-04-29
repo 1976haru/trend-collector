@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
-import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback } from './store.js';
+import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead } from './store.js';
 import { runCollection, reextractReport } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
@@ -242,6 +242,54 @@ api.get('/reports/:id', async (req, res) => {
     res.json(await loadReport(req.params.id));
   } catch {
     res.status(404).json({ error: 'not found' });
+  }
+});
+
+// ── 관리자: 기능개선 제안 조회 + 읽음 처리 ─────
+api.get('/admin/feedback', async (_req, res) => {
+  try {
+    const items = await listFeedback({ limit: 500 });
+    const unread = items.filter(f => !f.read).length;
+    res.json({ items, count: items.length, unread });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+api.patch('/admin/feedback/:id/read', async (req, res) => {
+  try {
+    const ok = await setFeedbackRead(req.params.id, req.body?.read !== false);
+    if (!ok) return res.status(404).json({ error: 'feedback not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── 관리자: 도메인별 본문 추출 실패 통계 ────────
+api.get('/admin/extraction-stats', async (_req, res) => {
+  try {
+    const items = await listReports({ limit: 30 });
+    const domainStats = {};
+    for (const meta of items) {
+      let r;
+      try { r = await loadReport(meta.id); } catch { continue; }
+      for (const a of r.articles || []) {
+        let host = '';
+        try { host = new URL(a.resolvedUrl || a.url || '').hostname.replace(/^www\./, ''); } catch {}
+        if (!host) continue;
+        if (!domainStats[host]) domainStats[host] = { total: 0, success: 0, failed: 0 };
+        domainStats[host].total++;
+        if (a.extracted) domainStats[host].success++;
+        else             domainStats[host].failed++;
+      }
+    }
+    const arr = Object.entries(domainStats)
+      .map(([host, s]) => ({ host, ...s, rate: s.total ? Math.round(s.success / s.total * 100) : 0 }))
+      .sort((a, b) => b.failed - a.failed);
+    res.json({ reportsScanned: items.length, items: arr });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

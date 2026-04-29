@@ -107,15 +107,28 @@ function renderArticleCard(a, i, includeImages = true) {
   const depts    = (a.departments || []).map(d => d.name).join(', ');
   const issueType = a.sentiment?.issueType || '';
 
-  // 본문 — extracted 면 cleanHtml 우선, 아니면 contentText 문단 분리, 그것도 없으면 summary
+  // 본문 — 우선순위:
+  //   ① 추출된 cleanHtml  ② contentText 문단  ③ synthesizedFallback (RSS 합성)
+  //   ④ + fallbackScreenshot (스크린샷)
   let bodyHtml = '';
   if (a.contentHtml && a.extracted) {
     bodyHtml = strictClean(a.contentHtml);
   } else if (a.contentText && a.extracted) {
     bodyHtml = paragraphsFromText(a.contentText).map(p => `<p>${esc(p)}</p>`).join('');
+  } else if (a.synthesizedFallback) {
+    bodyHtml = `<div class="fallback-note">⚠️ 본문 자동 추출에 실패하여 RSS 메타데이터로 대체된 보고서 항목입니다.</div>`
+            + paragraphsFromText(a.synthesizedFallback).map(p => `<p>${esc(p)}</p>`).join('');
   } else {
     bodyHtml = `<p class="missing">⚠️ 본문 자동 추출 실패 — 원문 링크에서 직접 확인하세요. (${esc(a.extractionError || 'no body')})</p>`
             + (a.summary ? `<p>${esc(a.summary)}</p>` : '');
+  }
+  // 스크린샷 fallback (data: URI) 이 있으면 본문 끝에 표시
+  if (a.fallbackScreenshot && /^data:image\//i.test(a.fallbackScreenshot)) {
+    bodyHtml += `
+      <div class="screenshot-block">
+        <div class="screenshot-label">📸 원문 페이지 스크린샷 (자동 추출 대체)</div>
+        <img src="${esc(a.fallbackScreenshot)}" alt="원문 페이지 스크린샷" />
+      </div>`;
   }
 
   // 대표 이미지 + 본문 이미지
@@ -287,40 +300,78 @@ export function renderReportHtml(report) {
   .issuesBox ol { padding-left: 18pt; margin: 0; }
   .issuesBox li { margin-bottom: 3pt; font-size: 10pt; }
 
-  /* ── 기사 원문형(신문 카드) ── */
+  /* ── 기사 원문형(신문 페이지 풍) ── */
   .article {
     page-break-before: always;
-    padding: 6mm 2mm 8mm;
+    padding: 6mm 4mm 8mm;
   }
-  .article-source { display: flex; gap: 8pt; align-items: center; font-size: 10pt; color: #555; padding-bottom: 4pt; border-bottom: .5pt solid #ccc; }
-  .article-source .src-name { font-weight: 700; color:#0d1117; font-size: 11pt; }
+  /* 신문 한판: 매체명 — 큰 보더 — 큰 제목 — byline — 본문 */
+  .article-source {
+    display: flex; gap: 8pt; align-items: center;
+    padding-bottom: 4pt;
+    border-bottom: .5pt solid #999;
+    font-size: 10pt; color: #555;
+  }
+  .article-source .src-name { font-weight: 700; color:#0d1117; font-size: 13pt; letter-spacing: -.3pt; }
   .article-source .src-tag,
   .article-source .src-provider { padding: 1pt 6pt; border: .5pt solid #d5d0c8; border-radius: 8pt; font-size: 9pt; color:#666; background:#f8f6f2; }
 
   .article-title {
     font-family: 'Noto Serif KR', 'Noto Sans KR', serif;
-    font-size: 19pt;
+    font-size: 24pt;
     font-weight: 700;
     color: #0d1117;
-    line-height: 1.35;
-    margin: 8pt 0 4pt;
+    letter-spacing: -.5pt;
+    line-height: 1.25;
+    margin: 12pt 0 6pt;
     page-break-after: avoid;
   }
-  .article-byline { display: flex; flex-wrap: wrap; gap: 8pt; font-size: 9.5pt; color: #888; margin-bottom: 8pt; }
-  .article-byline .kw-tag { background:#0d1117; color:white; padding: 1pt 7pt; border-radius: 8pt; font-size: 9pt; }
+  .article-byline {
+    display: flex; flex-wrap: wrap; gap: 8pt;
+    font-size: 9.5pt; color: #555;
+    padding: 5pt 0 6pt;
+    border-bottom: 1.2pt solid #0d1117;
+    margin-bottom: 10pt;
+  }
+  .article-byline .kw-tag    { background:#0d1117; color:white; padding: 1pt 7pt; border-radius: 8pt; font-size: 9pt; }
   .article-byline .issue-tag { background:#e0f2fe; color:#075985; padding: 1pt 7pt; border-radius: 8pt; font-size: 9pt; }
 
-  .lead-fig { margin: 6pt 0 8pt; }
-  .lead-fig img { width: 100%; max-height: 95mm; object-fit: cover; border-radius: 3pt; }
-  .lead-fig figcaption { font-size: 9pt; color:#777; margin-top: 3pt; }
+  .lead-fig { margin: 8pt 0 10pt; }
+  .lead-fig img {
+    width: 100%; max-height: 105mm; object-fit: cover;
+    border: .5pt solid #ddd;
+  }
+  .lead-fig figcaption { font-size: 9pt; color:#666; margin-top: 4pt; padding-left: 4pt; border-left: 2pt solid #ccc; }
 
-  .article-body { font-size: 11pt; line-height: 1.75; color:#222; text-align: justify; word-break: keep-all; }
-  .article-body p { margin: 6pt 0 8pt; text-indent: 0; }
+  /* 본문 — serif, 신문 가독성 */
+  .article-body {
+    font-family: 'Noto Serif KR', 'Noto Sans KR', serif;
+    font-size: 11pt;
+    line-height: 1.85;
+    color:#1a1a1a;
+    text-align: justify;
+    word-break: keep-all;
+  }
+  .article-body p:first-of-type::first-letter {
+    font-size: 1.4em; font-weight: 700; color: #0d1117;
+  }
+  .article-body p { margin: 7pt 0 9pt; text-indent: 0; }
   .article-body a { color:#2563eb; word-break: break-all; }
-  .article-body img { max-width: 100%; height: auto; border-radius: 2pt; margin: 4pt 0; }
+  .article-body img { max-width: 100%; height: auto; border-radius: 2pt; margin: 6pt 0; border: .5pt solid #ddd; }
   .article-body figure { margin: 6pt 0; }
   .article-body figcaption { font-size: 9pt; color:#777; }
   .article-body .missing { color:#dc2626; }
+  .article-body .fallback-note { background:#fff7ed; border:1pt solid #fdba74; color:#9a3412;
+                                  padding:6pt 10pt; border-radius:4pt; font-size:10pt; margin-bottom:6pt; }
+  .article-body .screenshot-block {
+    margin: 10pt 0 0; padding: 6pt 0; border-top: .5pt dashed #999;
+    page-break-inside: avoid;
+  }
+  .article-body .screenshot-label { font-size: 9.5pt; color:#666; margin-bottom: 4pt; }
+  .article-body .screenshot-block img {
+    width: 100%; max-height: 220mm; object-fit: contain; border: .5pt solid #ddd;
+    background: #fafafa;
+  }
 
   .inline-imgs { display: flex; flex-wrap: wrap; gap: 6pt; margin: 6pt 0; }
   .inline-imgs .inline-fig { flex: 1 1 45%; max-width: 47%; margin: 0; }

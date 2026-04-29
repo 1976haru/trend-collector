@@ -10,6 +10,7 @@ import KeywordManager   from './components/keyword/KeywordManager.jsx';
 import RecentReports    from './components/reports/RecentReports.jsx';
 import ReportDetail     from './components/reports/ReportDetail.jsx';
 import RecipientSettings from './components/recipients/RecipientSettings.jsx';
+import AdminPanel       from './components/admin/AdminPanel.jsx';
 import FeedbackModal    from './components/feedback/FeedbackModal.jsx';
 
 import { useAuth }    from './hooks/useAuth.js';
@@ -74,7 +75,11 @@ export default function App() {
 
   return (
     <div style={S.app}>
-      <Header schedule={health?.schedule} onFeedback={() => setFeedbackOpen(true)} />
+      <Header
+        schedule={health?.schedule}
+        status={rep.current?.riskLevel?.level || (rep.reports[0]?.riskLevel?.level)}
+        onFeedback={() => setFeedbackOpen(true)}
+      />
 
       <main style={S.main}>
         <TabBar
@@ -149,6 +154,8 @@ export default function App() {
             onRemove={cfg.removeRecipient}
           />
         )}
+
+        {tab === 'admin' && <AdminPanel />}
       </main>
 
       <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />

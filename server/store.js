@@ -102,16 +102,36 @@ export async function loadReport(id) {
 }
 
 // ── 기능개선 제안 영구 저장 ──────────────────
+const FEEDBACK_PATH = () => path.join(DATA_DIR, 'feedback.json');
+
 export async function appendFeedback(entry) {
   await ensureDirs();
-  const file = path.join(DATA_DIR, 'feedback.json');
   let arr = [];
-  try { arr = JSON.parse(await fs.readFile(file, 'utf8')); if (!Array.isArray(arr)) arr = []; } catch {}
-  arr.push(entry);
-  // 최근 1000건 유지
+  try { arr = JSON.parse(await fs.readFile(FEEDBACK_PATH(), 'utf8')); if (!Array.isArray(arr)) arr = []; } catch {}
+  const id = (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  arr.push({ id, read: false, ...entry });
   if (arr.length > 1000) arr = arr.slice(-1000);
-  await fs.writeFile(file, JSON.stringify(arr, null, 2), 'utf8');
+  await fs.writeFile(FEEDBACK_PATH(), JSON.stringify(arr, null, 2), 'utf8');
   return arr.length;
+}
+
+export async function listFeedback({ limit = 200 } = {}) {
+  await ensureDirs();
+  let arr = [];
+  try { arr = JSON.parse(await fs.readFile(FEEDBACK_PATH(), 'utf8')); if (!Array.isArray(arr)) arr = []; } catch {}
+  return arr.slice(-limit).reverse();
+}
+
+export async function setFeedbackRead(id, read = true) {
+  await ensureDirs();
+  let arr = [];
+  try { arr = JSON.parse(await fs.readFile(FEEDBACK_PATH(), 'utf8')); if (!Array.isArray(arr)) arr = []; } catch { return false; }
+  const idx = arr.findIndex(f => f.id === id);
+  if (idx < 0) return false;
+  arr[idx].read = !!read;
+  arr[idx].readAt = read ? new Date().toISOString() : null;
+  await fs.writeFile(FEEDBACK_PATH(), JSON.stringify(arr, null, 2), 'utf8');
+  return true;
 }
 
 export async function listReports({ limit = 50 } = {}) {
@@ -129,6 +149,7 @@ export async function listReports({ limit = 50 } = {}) {
         keywords:    r.keywords,
         trigger:     r.trigger,
         emailedTo:   r.emailedTo || [],
+        riskLevel:   r.riskLevel || null,
       });
     } catch { /* skip corrupt */ }
   }
