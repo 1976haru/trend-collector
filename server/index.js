@@ -15,6 +15,8 @@ import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, 
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
 import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
+import { reportToDocx } from './wordGenerator.js';
+import { reportToXlsx } from './excelGenerator.js';
 import { embedImagesInReport } from './imageCache.js';
 import { isKakaoEnabled } from './notifyKakao.js';
 import { isNaverConfigured, getNaverSource, fetchNaverNews, reloadNaver, preloadNaver } from './sources/naver.js';
@@ -624,6 +626,66 @@ app.get('/api/reports/:id/pdf/download', requireAuth, async (req, res) => {
 // ── 호환 — 기존 /pdf 는 download 로 ─────────────
 app.get('/api/reports/:id/pdf', requireAuth, (req, res) => {
   res.redirect(302, `/api/reports/${encodeURIComponent(req.params.id)}/pdf/download`);
+});
+
+// ── 보고서 — Word (.docx) 다운로드 (PDF 대체) ────
+app.get('/api/reports/:id/word/download', requireAuth, async (req, res) => {
+  try {
+    const report = await loadReport(req.params.id);
+    const buf    = await reportToDocx(report);
+    const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
+    const fileName = `trend-report-${dateStr}.docx`;
+    res.set('Content-Type',        'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control',       'no-store');
+    res.send(buf);
+  } catch (e) {
+    console.error('[word:download] generation error:', e.stack || e.message);
+    res.status(500).type('text/html; charset=utf-8').send(
+      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">Word 다운로드 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}</pre>`
+    );
+  }
+});
+
+// ── 보고서 — HTML 다운로드 (브라우저 열고 Ctrl+P) ─
+app.get('/api/reports/:id/html-download', requireAuth, async (req, res) => {
+  try {
+    const orig = await loadReport(req.params.id);
+    // 이미지를 base64 로 임베드해서 오프라인에서도 열리게
+    const includeImages = orig.includeImages !== false;
+    const { report } = await embedImagesInReport(orig, { includeImages });
+    const html = renderReportHtml(report);
+    const dateStr = new Date(orig.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
+    const fileName = `trend-report-${dateStr}.html`;
+    res.set('Content-Type',        'text/html; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control',       'no-store');
+    res.send(html);
+  } catch (e) {
+    console.error('[html:download] generation error:', e.stack || e.message);
+    res.status(500).type('text/html; charset=utf-8').send(
+      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">HTML 다운로드 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}</pre>`
+    );
+  }
+});
+
+// ── 보고서 — Excel (.xlsx) 다운로드 (홍보 실적) ───
+app.get('/api/reports/:id/excel/download', requireAuth, async (req, res) => {
+  try {
+    const report = await loadReport(req.params.id);
+    const buf    = await reportToXlsx(report);
+    const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
+    const fileName = `trend-report-${dateStr}.xlsx`;
+    res.set('Content-Type',        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control',       'no-store');
+    res.send(buf);
+  } catch (e) {
+    console.error('[excel:download] generation error:', e.stack || e.message);
+    res.status(500).type('text/html; charset=utf-8').send(
+      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">Excel 다운로드 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}</pre>`
+    );
+  }
 });
 
 // ── 디버그: 보고서 → 렌더링된 HTML 그대로 (PDF 변환 없이) ──

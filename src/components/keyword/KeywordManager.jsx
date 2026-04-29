@@ -15,8 +15,8 @@ export default function KeywordManager({
 }) {
   const [input,    setInput]    = useState('');
   const [excInput, setExcInput] = useState('');
-  // 카테고리 접기/펼치기 상태 — 기본 첫 번째만 펼침
-  const [open, setOpen] = useState({ core: true });
+  // 카테고리 접기/펼치기 상태 — 기본 첫 번째(보호관찰류)만 펼침
+  const [open, setOpen] = useState({ protection: true });
 
   function addKw()      { const k = input.trim();    if (k) { onAdd(k); setInput(''); } }
   function addExclude() { const k = excInput.trim(); if (k && onAddExclude) { onAddExclude(k); setExcInput(''); } }

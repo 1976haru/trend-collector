@@ -20,6 +20,8 @@
     "@vitejs/plugin-react": "^4.3.4",
     "cheerio": "^1.2.0",
     "cookie-parser": "^1.4.7",
+    "docx": "^9.5.1",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "iconv-lite": "^0.7.2",
     "node-cron": "^3.0.3",

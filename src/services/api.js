@@ -47,6 +47,9 @@ export function reportHtmlUrl(id) {
 }
 export function reportPdfPreviewUrl(id)  { return `/api/reports/${encodeURIComponent(id)}/pdf/preview`; }
 export function reportPdfDownloadUrl(id) { return `/api/reports/${encodeURIComponent(id)}/pdf/download`; }
+export function reportWordDownloadUrl(id)  { return `/api/reports/${encodeURIComponent(id)}/word/download`; }
+export function reportHtmlDownloadUrl(id)  { return `/api/reports/${encodeURIComponent(id)}/html-download`; }
+export function reportExcelDownloadUrl(id) { return `/api/reports/${encodeURIComponent(id)}/excel/download`; }
 export function reportHtmlDebugUrl(id)   { return `/api/reports/${encodeURIComponent(id)}/html-debug`; }
 // 호환 alias
 export function reportPdfUrl(id) { return reportPdfDownloadUrl(id); }
@@ -143,5 +146,55 @@ export async function downloadNegativePdf(id) {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return { filename, size: blob.size };
+}
+
+// ── 일반 파일 다운로드 (PDF 매직 바이트 검증 X) ──
+async function fetchFileBlob(url, expectedCt) {
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.text()).slice(0, 300); } catch {}
+    if (res.status === 401) {
+      throw Object.assign(new Error('인증이 만료되었습니다. 다시 로그인하세요.'), { status: 401 });
+    }
+    throw Object.assign(new Error(`다운로드 실패 (HTTP ${res.status}). ${detail}`), { status: res.status });
+  }
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  if (expectedCt && !ct.includes(expectedCt)) {
+    let detail = '';
+    try { detail = (await res.text()).slice(0, 300); } catch {}
+    throw new Error(`예상과 다른 응답입니다 (${ct}). ${detail}`);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get('content-disposition') || '';
+  const m  = cd.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i);
+  const filename = m ? decodeURIComponent(m[1] || m[2] || '') : 'trend-report';
+  return { blob, filename };
+}
+
+async function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export async function downloadReportWord(id) {
+  const { blob, filename } = await fetchFileBlob(reportWordDownloadUrl(id), 'wordprocessingml');
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+
+export async function downloadReportHtml(id) {
+  const { blob, filename } = await fetchFileBlob(reportHtmlDownloadUrl(id), 'text/html');
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+
+export async function downloadReportExcel(id) {
+  const { blob, filename } = await fetchFileBlob(reportExcelDownloadUrl(id), 'spreadsheetml');
+  await triggerDownload(blob, filename);
   return { filename, size: blob.size };
 }

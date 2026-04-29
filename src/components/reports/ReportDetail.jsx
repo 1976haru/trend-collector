@@ -8,6 +8,7 @@ import { useState, useMemo } from 'react';
 import {
   downloadReportPdf, previewReportPdf, reportHtmlDebugUrl,
   reextractReport, reextractArticle, downloadNegativePdf,
+  downloadReportWord, downloadReportHtml, downloadReportExcel,
 } from '../../services/api.js';
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 
@@ -181,10 +182,84 @@ function ArticleItem({ idx, art, viewMode = 'paper', onReextract }) {
   );
 }
 
+// 보고용 한 눈 요약 카드 — 분위기 / 이슈 유형 / 긴급 대응 / 기관 vs 언론
+function HighlightCard({ report }) {
+  const sent  = report.sentiment   || {};
+  const acts  = report.actionRequired || [];
+  const trend = report.trending    || [];
+  const ag    = report.agencyStats || {};
+  const negPct = sent.negativePct || 0;
+
+  // 이슈 유형 TOP 3
+  const issueCounts = {};
+  for (const a of (report.articles || [])) {
+    const t = a.sentiment?.issueType;
+    if (t && t !== '기타') issueCounts[t] = (issueCounts[t] || 0) + 1;
+  }
+  const topIssues = Object.entries(issueCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+  // 오늘의 핵심 이슈: 부정 이슈 1순위 → 없으면 급상승 → 없으면 이슈 유형 1위
+  const lead = (report.negativeIssues || [])[0]
+            || (trend[0] ? { title: `${trend[0].keyword} 관련 보도 급상승 (${trend[0].prev}→${trend[0].curr})`, source: '' } : null)
+            || (topIssues[0] ? { title: `${topIssues[0][0]} 이슈 ${topIssues[0][1]}건 집중`, source: '' } : null);
+
+  const moodColor = sent.overall === '부정 우세' ? '#dc2626'
+                  : sent.overall === '긍정 우세' ? '#16a34a' : '#888';
+  const moodIcon  = sent.overall === '부정 우세' ? '⚠️' : sent.overall === '긍정 우세' ? '✅' : '➖';
+
+  return (
+    <div style={hl.wrap}>
+      <div style={hl.head}>📌 핵심 요약 카드</div>
+      <div style={hl.grid}>
+        <div style={hl.cell}>
+          <div style={hl.label}>전체 분위기</div>
+          <div style={{ ...hl.value, color: moodColor }}>{moodIcon} {sent.overall || '데이터 없음'}</div>
+          <div style={hl.sub}>긍 {sent.positivePct||0}% · 부 {sent.negativePct||0}% · 중 {sent.neutralPct||0}%</div>
+        </div>
+        <div style={hl.cell}>
+          <div style={hl.label}>주요 이슈</div>
+          <div style={hl.value}>{topIssues.map(([k]) => k).join(', ') || '—'}</div>
+          <div style={hl.sub}>{topIssues.length ? `${topIssues.length}개 분야 식별` : '특정 분야 집중 없음'}</div>
+        </div>
+        <div style={hl.cell}>
+          <div style={hl.label}>긴급 대응 필요</div>
+          <div style={{ ...hl.value, color: acts.length ? '#9a3412' : '#16a34a' }}>{acts.length}건</div>
+          <div style={hl.sub}>긴급 {acts.filter(a => a.priority === '긴급').length} · 주의 {acts.filter(a => a.priority === '주의').length}</div>
+        </div>
+        <div style={hl.cell}>
+          <div style={hl.label}>발행 주체</div>
+          <div style={hl.value}>기관 {ag.agency || 0} / 언론 {ag.press || 0}</div>
+          <div style={hl.sub}>홍보 실적: {ag.agency || 0}건</div>
+        </div>
+      </div>
+      {lead && (
+        <div style={hl.lead}>
+          <span style={hl.leadLabel}>🔎 오늘의 핵심 이슈</span>
+          <span style={hl.leadText}>{lead.title}{lead.source ? ` [${lead.source}]` : ''}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const hl = {
+  wrap:  { background: 'white', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
+  head:  { fontSize: 11, color: '#888', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 10 },
+  grid:  { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 },
+  cell:  { background: '#fafaf6', borderRadius: 8, padding: '10px 12px', border: '1px solid #f0ede8' },
+  label: { fontSize: 11, color: '#888', fontWeight: 600, marginBottom: 4 },
+  value: { fontSize: 16, fontWeight: 800, color: '#0d1117', lineHeight: 1.3 },
+  sub:   { fontSize: 11, color: '#666', marginTop: 3 },
+  lead:  { background: '#0d1117', color: 'white', borderRadius: 8, padding: '10px 12px', marginTop: 10, fontSize: 13, lineHeight: 1.5 },
+  leadLabel: { fontWeight: 700, marginRight: 8 },
+  leadText:  { color: '#fef3c7' },
+};
+
 export default function ReportDetail({ report, onClose, onEmail, onReportRefresh, sending }) {
-  const [pdfBusy,   setPdfBusy]   = useState('');     // 'preview' | 'download' | 'negative' | ''
+  const [pdfBusy,   setPdfBusy]   = useState('');     // 'preview' | 'download' | 'negative' | 'word' | 'html' | 'excel' | ''
   const [pdfError,  setPdfError]  = useState('');
   const [pdfOk,     setPdfOk]     = useState('');
+  const [pdfFallback, setPdfFallback] = useState(false);
   const [viewMode,  setViewMode]  = useState('paper');     // 'paper' | 'analytic' | 'failures'
   const [negFirst,  setNegFirst]  = useState(true);
   const [reextBusy, setReextBusy] = useState('');     // 'all' | 'failed' | id | ''
@@ -227,35 +302,72 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
   }, [report.extractionStats, articlesRaw]);
   const extractRate = stats.total ? Math.round((stats.extracted / stats.total) * 100) : 0;
 
+  function setBusyError(msg, suggestFallback = false) {
+    setPdfError(msg);
+    setPdfFallback(suggestFallback);
+  }
   async function onPreview() {
-    setPdfBusy('preview'); setPdfError(''); setPdfOk('');
+    setPdfBusy('preview'); setPdfError(''); setPdfOk(''); setPdfFallback(false);
     try {
       const r = await previewReportPdf(report.id);
       setPdfOk(`📄 미리보기 창 열림 (${r.filename})`);
     } catch (e) {
-      setPdfError(e.message || String(e));
+      setBusyError(e.message || String(e), true);
     } finally {
       setPdfBusy('');
     }
   }
   async function onDownload() {
-    setPdfBusy('download'); setPdfError(''); setPdfOk('');
+    setPdfBusy('download'); setPdfError(''); setPdfOk(''); setPdfFallback(false);
     try {
       const r = await downloadReportPdf(report.id);
-      setPdfOk(`💾 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
+      setPdfOk(`💾 PDF 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
     } catch (e) {
-      setPdfError(e.message || String(e));
+      setBusyError(e.message || String(e), true);
     } finally {
       setPdfBusy('');
     }
   }
   async function onDownloadNegative() {
-    setPdfBusy('negative'); setPdfError(''); setPdfOk('');
+    setPdfBusy('negative'); setPdfError(''); setPdfOk(''); setPdfFallback(false);
     try {
       const r = await downloadNegativePdf(report.id);
       setPdfOk(`💾 부정 이슈 PDF 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
     } catch (e) {
-      setPdfError(e.message || String(e));
+      setBusyError(e.message || String(e), true);
+    } finally {
+      setPdfBusy('');
+    }
+  }
+  async function onDownloadWord() {
+    setPdfBusy('word'); setPdfError(''); setPdfOk(''); setPdfFallback(false);
+    try {
+      const r = await downloadReportWord(report.id);
+      setPdfOk(`📝 Word 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
+    } catch (e) {
+      setBusyError(e.message || String(e));
+    } finally {
+      setPdfBusy('');
+    }
+  }
+  async function onDownloadHtml() {
+    setPdfBusy('html'); setPdfError(''); setPdfOk(''); setPdfFallback(false);
+    try {
+      const r = await downloadReportHtml(report.id);
+      setPdfOk(`🌐 HTML 다운로드 완료 — ${r.filename} · 브라우저로 열고 Ctrl+P 로 인쇄/PDF 저장 가능`);
+    } catch (e) {
+      setBusyError(e.message || String(e));
+    } finally {
+      setPdfBusy('');
+    }
+  }
+  async function onDownloadExcel() {
+    setPdfBusy('excel'); setPdfError(''); setPdfOk(''); setPdfFallback(false);
+    try {
+      const r = await downloadReportExcel(report.id);
+      setPdfOk(`📊 Excel 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
+    } catch (e) {
+      setBusyError(e.message || String(e));
     } finally {
       setPdfBusy('');
     }
@@ -278,18 +390,27 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
   return (
     <div style={S.wrap}>
-      {/* 액션 바 */}
+      {/* 액션 바 — 다운로드 옵션 4종 + 메일 */}
       <div style={S.actBar}>
         <button onClick={onClose} style={S.back}>← 목록</button>
         <div style={S.spacer} />
-        <button onClick={onPreview} disabled={!!pdfBusy} style={S.linkBtn}>
-          {pdfBusy === 'preview' ? '⏳ 생성 중…' : '🔍 PDF 미리보기'}
+        <button onClick={onPreview} disabled={!!pdfBusy} style={S.linkBtn} title="브라우저에서 PDF 열기">
+          {pdfBusy === 'preview' ? '⏳' : '🔍 PDF 미리보기'}
         </button>
-        <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn}>
-          {pdfBusy === 'download' ? '⏳ 생성 중…' : '📄 PDF 다운로드'}
+        <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn} title="PDF 다운로드">
+          {pdfBusy === 'download' ? '⏳' : '📄 PDF'}
         </button>
-        <button onClick={onDownloadNegative} disabled={!!pdfBusy} style={S.negPdfBtn}>
-          {pdfBusy === 'negative' ? '⏳ 생성 중…' : '🚨 부정 PDF'}
+        <button onClick={onDownloadWord} disabled={!!pdfBusy} style={S.wordBtn} title="Word(.docx) 다운로드 — PDF 실패 시 대체">
+          {pdfBusy === 'word' ? '⏳' : '📝 Word'}
+        </button>
+        <button onClick={onDownloadHtml} disabled={!!pdfBusy} style={S.htmlBtn} title="HTML 다운로드 — 브라우저로 열고 Ctrl+P">
+          {pdfBusy === 'html' ? '⏳' : '🌐 HTML'}
+        </button>
+        <button onClick={onDownloadExcel} disabled={!!pdfBusy} style={S.excelBtn} title="Excel 다운로드 — 홍보 실적 / 기관별 집계">
+          {pdfBusy === 'excel' ? '⏳' : '📊 Excel'}
+        </button>
+        <button onClick={onDownloadNegative} disabled={!!pdfBusy} style={S.negPdfBtn} title="부정 이슈만 PDF">
+          {pdfBusy === 'negative' ? '⏳' : '🚨 부정'}
         </button>
         <button onClick={() => onEmail(report.id)} style={S.mail} disabled={sending}>
           {sending ? '발송 중…' : '✉️ 메일'}
@@ -315,10 +436,21 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
         </div>
       </div>
 
-      {/* PDF 상태 메시지 */}
+      {/* PDF 상태 메시지 — 실패 시 Word/HTML 대체 다운로드 자동 제안 */}
       {pdfError && (
         <div style={S.errBox}>
           ⚠️ {pdfError}
+          {pdfFallback && (
+            <span style={S.fallbackNote}>
+              {' '}→ PDF 생성에 실패했습니다. <strong>Word</strong> 또는 <strong>HTML</strong> 다운로드로 대체하세요.
+            </span>
+          )}
+          {pdfFallback && (
+            <span style={{ display: 'inline-flex', gap: 6, marginLeft: 6 }}>
+              <button onClick={onDownloadWord} disabled={!!pdfBusy} style={S.wordBtnSm}>📝 Word 다운로드</button>
+              <button onClick={onDownloadHtml} disabled={!!pdfBusy} style={S.htmlBtnSm}>🌐 HTML 다운로드</button>
+            </span>
+          )}
           <a href={reportHtmlDebugUrl(report.id)} target="_blank" rel="noopener noreferrer" style={S.debugLink}>
             (HTML 디버그 보기 →)
           </a>
@@ -373,6 +505,16 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
       {/* 위험도 배지 */}
       <RiskBadge level={riskLevel.level} reasons={riskLevel.reasons} />
+
+      {/* 보고용 핵심 요약 카드 — 한눈에 파악 */}
+      <HighlightCard report={report} />
+
+      {/* 부정 50%↑ 경고 */}
+      {(sentiment.negativePct || 0) >= 50 && (
+        <div style={S.dangerBox}>
+          🚨 <strong>위험 경고</strong> — 부정 보도 비율이 <strong>{sentiment.negativePct}%</strong> 로 절반을 넘었습니다. 즉시 대응 검토가 필요합니다.
+        </div>
+      )}
 
       {/* 총평 / 주요 동향 / 대응 — 법무부 보고 형식 */}
       {report.briefingText?.총평 ? (
@@ -538,6 +680,32 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
             <div style={S.diagNote}>
               ℹ️ 날짜 미확인 기사 {report.dateUnknownCount}건이 포함되어 있습니다. (기본 보존)
             </div>
+          )}
+        </div>
+      )}
+
+      {/* 기관 배포 vs 언론 보도 — 홍보 실적 */}
+      {report.agencyStats && (report.agencyStats.agency + report.agencyStats.press) > 0 && (
+        <div style={S.panel}>
+          <div style={S.panelLabel}>🏛 발행 주체별 분포 (홍보 실적)</div>
+          <div style={S.deptRow}>
+            <span style={S.deptName}>기관 배포 자료</span>
+            <span style={{ ...S.deptCnt, color: '#0d1117' }}>{report.agencyStats.agency}건</span>
+          </div>
+          <div style={S.deptRow}>
+            <span style={S.deptName}>일반 언론 보도</span>
+            <span style={S.deptCnt}>{report.agencyStats.press}건</span>
+          </div>
+          {Object.entries(report.agencyStats.byAgency || {}).length > 0 && (
+            <>
+              <div style={{ marginTop: 8, fontSize: 11, color: '#888', fontWeight: 600 }}>기관별 보도자료 건수</div>
+              {Object.entries(report.agencyStats.byAgency).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, v]) => (
+                <div key={k} style={S.deptRow}>
+                  <span style={S.deptName}>{k}</span>
+                  <span style={S.deptCnt}>{v}건</span>
+                </div>
+              ))}
+            </>
           )}
         </div>
       )}
@@ -735,6 +903,24 @@ const S = {
   negPdfBtn:     { padding: '9px 13px', minHeight: 40, borderRadius: 8, border: 'none',
                    background: '#dc2626', color: 'white', fontSize: 12.5, fontWeight: 700,
                    cursor: 'pointer', fontFamily: 'inherit' },
+  wordBtn:       { padding: '9px 13px', minHeight: 40, borderRadius: 8, border: 'none',
+                   background: '#2563eb', color: 'white', fontSize: 12.5, fontWeight: 700,
+                   cursor: 'pointer', fontFamily: 'inherit' },
+  htmlBtn:       { padding: '9px 13px', minHeight: 40, borderRadius: 8, border: '1.5px solid #d5d0c8',
+                   background: 'white', color: '#444', fontSize: 12.5, fontWeight: 600,
+                   cursor: 'pointer', fontFamily: 'inherit' },
+  excelBtn:      { padding: '9px 13px', minHeight: 40, borderRadius: 8, border: 'none',
+                   background: '#16a34a', color: 'white', fontSize: 12.5, fontWeight: 700,
+                   cursor: 'pointer', fontFamily: 'inherit' },
+  wordBtnSm:     { padding: '5px 10px', minHeight: 28, borderRadius: 6, border: 'none',
+                   background: '#2563eb', color: 'white', fontSize: 11.5, fontWeight: 700,
+                   cursor: 'pointer', fontFamily: 'inherit' },
+  htmlBtnSm:     { padding: '5px 10px', minHeight: 28, borderRadius: 6, border: '1.5px solid #d5d0c8',
+                   background: 'white', color: '#444', fontSize: 11.5, fontWeight: 600,
+                   cursor: 'pointer', fontFamily: 'inherit' },
+  fallbackNote:  { color: '#9a3412', fontWeight: 600 },
+  dangerBox:     { background: '#fee2e2', border: '1.5px solid #fca5a5', color: '#991b1b',
+                   borderRadius: 10, padding: '11px 14px', fontSize: 13.5, fontWeight: 600 },
 
   viewDim:       { opacity: 0.4, cursor: 'not-allowed' },
 

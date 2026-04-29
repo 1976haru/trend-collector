@@ -13,7 +13,7 @@ const REPORTS_DIR = path.join(DATA_DIR, 'reports');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  keywords:           ['법무부', '검찰', '교정'],
+  keywords:           ['보호관찰', '보호관찰소', '전자감독', '소년원', '청소년비행예방센터', '법무부', '검찰', '교정', '출입국'],
   excludes:           [],
   recipients:         [],
   reportType:         'daily',

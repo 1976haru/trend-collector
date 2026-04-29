@@ -238,6 +238,29 @@ function buildBriefLine(a) {
   return `${head} — [${a.source || '미상'}] ${sLbl}${issue}${dept ? `, ${dept}` : ''} · ${need}`;
 }
 
+// 기사 발행 주체 — 기관 배포(agency) vs 일반 언론(press)
+// 기준: mediaType==='정부/공공기관' OR url 도메인 .go.kr/.korea.kr/.or.kr OR 제목/요약에 '보도자료'.
+function classifyArticleSource(a = {}) {
+  if (a.mediaType === '정부/공공기관') return 'agency';
+  let host = '';
+  try { host = new URL(a.url || '').hostname.toLowerCase().replace(/^www\./, ''); } catch {}
+  if (host.endsWith('.go.kr') || host === 'korea.kr' || host.endsWith('.korea.kr')) return 'agency';
+  const hay = `${a.title || ''} ${a.summary || ''}`;
+  if (/\b보도자료\b|press release/i.test(hay)) return 'agency';
+  return 'press';
+}
+
+// 기관별 카운트 — agency 로 분류된 기사를 source(매체명) 기준으로 집계
+function countAgencies(articles = []) {
+  const out = {};
+  for (const a of articles) {
+    if (a.articleSource !== 'agency') continue;
+    const k = a.source || '미상';
+    out[k] = (out[k] || 0) + 1;
+  }
+  return out;
+}
+
 // 우선순위 계산 — 부서 / 매체 / 감정 / 부정 키워드로 라벨링
 function computePriority(article) {
   const sent = article.sentiment?.label;
@@ -512,9 +535,10 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   // dateUnknown 카운트
   const dateUnknownCount = processed.filter(a => a.dateUnknown).length;
 
-  // 2) 각 기사에 mediaType 부여
+  // 2) 각 기사에 mediaType + 기관/언론 구분 부여
   for (const a of processed) {
-    a.mediaType = classifyMedia(a.source);
+    a.mediaType   = classifyMedia(a.source);
+    a.articleSource = classifyArticleSource(a);   // 'agency' | 'press'
   }
 
   // 3) 본문 추출 (병렬 5)  — 공공기관 내부 업무용으로만 사용.
@@ -572,6 +596,15 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     m[k] = (m[k] || 0) + 1;
     return m;
   }, {});
+
+  // 7.4) 기관 배포 vs 언론 보도 — 홍보 실적 집계
+  const agencyArticles = processed.filter(a => a.articleSource === 'agency');
+  const pressArticles  = processed.filter(a => a.articleSource !== 'agency');
+  const agencyStats = {
+    agency: agencyArticles.length,
+    press:  pressArticles.length,
+    byAgency: countAgencies(processed),
+  };
 
   // 7.5) 본문 추출 통계
   const extractedCount = processed.filter(a => a.extracted).length;
@@ -664,6 +697,7 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     keywordCounts,
     departmentCounts,
     sourceCounts,
+    agencyStats,
     sentiment,
     trending,
     groups,
