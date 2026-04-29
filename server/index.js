@@ -16,6 +16,7 @@ import { renderReportHtml, renderReportEmailHtml, renderReportText } from './rep
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
 import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
 import { isKakaoEnabled } from './notifyKakao.js';
+import { isNaverConfigured } from './sources/naver.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, '..');
@@ -46,6 +47,11 @@ app.get('/api/health', async (_req, res) => {
     smtp:            smtpConfigured(),
     kakao:           isKakaoEnabled(),
     adminConfigured: !!process.env.ADMIN_PASSWORD,
+    sources: {
+      googleNews:      cfg.useGoogleNews !== false,
+      naverNews:       !!cfg.useNaverNews && isNaverConfigured(),
+      naverConfigured: isNaverConfigured(),
+    },
     schedule: {
       autoCollect:   cfg.autoCollect !== false,
       mode:          sch.mode,
@@ -150,6 +156,10 @@ api.put('/config', async (req, res) => {
     'autoCollect', 'scheduleMode', 'intervalHours', 'reportTime',
     'autoEmail', 'attachPdf',
     'alertOnNegative', 'alertOnTrending', 'alertOnGov', 'alertOnCentral', 'alertKeywords',
+    // 수집 / 본문 / 소스
+    'collectPeriod', 'collectFromDate', 'collectToDate',
+    'extractContent', 'includeImages',
+    'useGoogleNews', 'useNaverNews',
   ];
   const patch = {};
   for (const k of allowed) {

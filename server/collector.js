@@ -11,6 +11,7 @@ import { classifyMedia, countByMediaType, MEDIA_TYPES } from './mediaList.js';
 import { analyzeSentiments } from './sentiment.js';
 import { extractMany } from './articleExtractor.js';
 import { suggestDepartments, countDepartments } from './departments.js';
+import { fetchNaverNews, isNaverConfigured } from './sources/naver.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -32,7 +33,42 @@ async function fetchRss(keyword) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const xml = await res.text();
-  return parseRss(xml, keyword).slice(0, MAX_PER_KEYWORD);
+  const items = parseRss(xml, keyword).slice(0, MAX_PER_KEYWORD);
+  // 출처 라벨 — 병합 후 분석/통계에서 사용
+  for (const it of items) it.sourceProvider = 'google';
+  return items;
+}
+
+/**
+ * 단일 키워드에 대해 활성화된 모든 소스를 병렬 호출.
+ * 한 소스가 실패해도 다른 소스는 계속 진행한다.
+ * @param {string} keyword
+ * @param {Object} cfg loadConfig() 결과
+ * @returns {Promise<{articles:Array, errors:Array<{keyword,source,error}>}>}
+ */
+async function fetchAllSources(keyword, cfg) {
+  const tasks = [];
+  if (cfg.useGoogleNews !== false) {
+    tasks.push({ name: 'google', p: fetchRss(keyword) });
+  }
+  if (cfg.useNaverNews && isNaverConfigured()) {
+    tasks.push({ name: 'naver', p: fetchNaverNews(keyword, { display: MAX_PER_KEYWORD }) });
+  }
+  if (!tasks.length) return { articles: [], errors: [] };
+
+  const results = await Promise.allSettled(tasks.map(t => t.p));
+  const articles = [];
+  const errors   = [];
+  results.forEach((r, i) => {
+    const t = tasks[i];
+    if (r.status === 'fulfilled') {
+      articles.push(...(r.value || []));
+    } else {
+      const msg = r.reason?.message || String(r.reason);
+      errors.push({ keyword, source: t.name, error: msg });
+    }
+  });
+  return { articles, errors };
 }
 
 function parseRss(xml, keyword) {
@@ -293,12 +329,12 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   const all    = [];
   const errors = [];
   for (const kw of cfg.keywords) {
-    try {
-      const items = await fetchRss(kw);
-      all.push(...items);
-    } catch (e) {
-      errors.push({ keyword: kw, error: e.message });
-    }
+    const r = await fetchAllSources(kw, cfg);
+    all.push(...r.articles);
+    errors.push(...r.errors);
+  }
+  if (all.length === 0 && errors.length === 0) {
+    throw new Error('활성화된 뉴스 소스가 없습니다. Google News / Naver News 둘 중 하나는 켜야 합니다.');
   }
 
   // 0) 수집 기간 필터 (publishedAt 기준)
@@ -360,6 +396,13 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     a.priority    = computePriority(a);
   }
 
+  // 7.3) 소스별 통계 (병합 후 dedupe·필터 통과 기준)
+  const sourceCounts = processed.reduce((m, a) => {
+    const k = a.sourceProvider || 'unknown';
+    m[k] = (m[k] || 0) + 1;
+    return m;
+  }, {});
+
   // 7.5) 본문 추출 통계
   const extractedCount = processed.filter(a => a.extracted).length;
   const extractionFailed = processed
@@ -412,6 +455,7 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     mediaCounts,
     keywordCounts,
     departmentCounts,
+    sourceCounts,                         // { google: n, naver: m }
     sentiment,
     trending,
     groups,

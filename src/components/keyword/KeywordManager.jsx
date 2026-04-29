@@ -143,6 +143,32 @@ export default function KeywordManager({
         </div>
       )}
 
+      {/* 뉴스 소스 */}
+      {config && (
+        <div style={S.panel}>
+          <div style={S.label}>📰 뉴스 소스 (병합 수집)</div>
+          <label style={S.toggle}>
+            <input type="checkbox" checked={config.useGoogleNews !== false}
+              onChange={e => onUpdateConfig({ useGoogleNews: e.target.checked })} />
+            <span><strong>Google News</strong> RSS 사용 (전 세계 매체, 추천)</span>
+          </label>
+          <label style={S.toggle}>
+            <input type="checkbox" checked={!!config.useNaverNews}
+              onChange={e => onUpdateConfig({ useNaverNews: e.target.checked })}
+              disabled={!health?.sources?.naverConfigured} />
+            <span>
+              <strong>Naver News</strong> 검색 API 사용 (국내 매체 커버리지)
+              {!health?.sources?.naverConfigured && (
+                <span style={S.warn}> ⚠️ NAVER_CLIENT_ID / SECRET / NAVER_ENABLED 환경변수 미설정</span>
+              )}
+            </span>
+          </label>
+          {(config.useGoogleNews === false && !config.useNaverNews) && (
+            <div style={S.errBox}>⚠️ 두 소스 모두 OFF 입니다. 최소 하나는 켜야 수집이 동작합니다.</div>
+          )}
+        </div>
+      )}
+
       {/* 즉시 수집 — 강조 */}
       <button style={S.collect} onClick={onCollect}
         disabled={loading || keywords.length === 0}>
@@ -196,4 +222,8 @@ const S = {
               background: 'linear-gradient(180deg, #0d1117 0%, #1f2937 100%)',
               color: 'white', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
               boxShadow: '0 4px 10px rgba(13,17,23,.18)', marginBottom: 12 },
+
+  warn:     { color: '#c53030', fontSize: 11, marginLeft: 4 },
+  errBox:   { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030',
+              padding: '8px 11px', borderRadius: 7, fontSize: 12, marginTop: 8 },
 };

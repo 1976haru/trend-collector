@@ -13,6 +13,7 @@
 | 🏷 **법무부 키워드** | 핵심 / 기관·업무 / 정책·이슈 3개 카테고리, 카테고리별 접기/펼치기 |
 | 📆 **수집 기간** | 24시간 / 3·7·14·30일 / 직접 설정 — `publishedAt` 기준 필터링, 기간 외·파싱 실패 카운트 |
 | ⏰ 자동 수집 | 매일 시각 / 6·10·12·24·48시간 / OFF, 설정 변경 시 cron 자동 재기동 |
+| 🌐 **뉴스 소스 (병합)** | **Google News RSS** + **Naver News 검색 API** 병렬 호출 → URL/제목 dedupe → 기간 필터. UI 토글로 소스별 ON/OFF, 한 소스 실패해도 나머지는 계속 |
 | 📰 본문 + 이미지 추출 | cheerio 로 본문/대표이미지/본문이미지/기자명, 병렬 5, 타임아웃 8s, Google News redirect 해석 |
 | 📊 **감정 분석 + 근거** | 긍·부정 키워드 매칭 결과 + 점수 + 판단 사유 + 이슈 유형 + 위험 키워드 |
 | 🏛 관련 부서 자동 추천 | 출입국·교정·범죄예방·검찰·인권·법무실·디지털성범죄·마약 등 9개 |
@@ -97,6 +98,8 @@ https://trend-collector.onrender.com
 | `REPORT_TIME` | | 일일 cron 기본값 `HH:MM` (KST). 운영 중에는 UI 설정이 우선 |
 | `BASE_URL` | | 메일 본문 링크용 절대 URL (예: `https://trend-collector.onrender.com`) |
 | `FEEDBACK_TO_EMAIL` | ⭐ | 기능 개선 제안 메일 수신 주소 (없으면 제안 모달 비활성) |
+| `NAVER_ENABLED` | | `true` 일 때만 Naver News 사용 (기본 false) |
+| `NAVER_CLIENT_ID` `NAVER_CLIENT_SECRET` | | https://developers.naver.com 에서 발급 (검색 API 일 25,000건 무료) |
 | `OPENAI_API_KEY` | | 추후 LLM 요약용 (현재 미사용) |
 | `KAKAO_ENABLED` | | `true` 일 때만 카카오 알림 시도 (기본 false, 스텁) |
 | `KAKAO_ACCESS_TOKEN` `KAKAO_TEMPLATE_ID` `KAKAO_TARGET_UUID` | | 카카오 알림용 (P2) |

@@ -35,6 +35,10 @@ const DEFAULT_CONFIG = {
   extractContent:     true,         // 본문 추출 ON/OFF
   includeImages:      true,         // PDF 에 이미지 포함
 
+  // ── 뉴스 소스 ─────────────────────────────────
+  useGoogleNews:      true,         // Google News RSS 사용
+  useNaverNews:       false,        // Naver News Search API 사용 (env 키 필요)
+
   // ── 자동 발송 ─────────────────────────────────
   autoEmail:          true,
   attachPdf:          true,         // 자동 메일에 PDF 첨부

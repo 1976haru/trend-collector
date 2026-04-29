@@ -320,6 +320,19 @@ export default function ReportDetail({ report, onClose, onEmail, sending }) {
         </div>
       )}
 
+      {/* 소스별 통계 */}
+      {report.sourceCounts && Object.keys(report.sourceCounts).length > 0 && (
+        <div style={S.panel}>
+          <div style={S.panelLabel}>🌐 뉴스 소스별 수집량</div>
+          {Object.entries(report.sourceCounts).map(([k, v]) => (
+            <div key={k} style={S.deptRow}>
+              <span style={S.deptName}>{k === 'google' ? '🌍 Google News' : k === 'naver' ? '🇰🇷 Naver News' : k}</span>
+              <span style={S.deptCnt}>{v}건</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 부서별 분포 */}
       {report.departmentCounts && Object.keys(report.departmentCounts).length > 0 && (
         <div style={S.panel}>

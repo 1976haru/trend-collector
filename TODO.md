@@ -1,6 +1,15 @@
 # 📌 TODO
 
-## ✅ 이번 라운드 (법무부 특화 + 감정 근거 + PDF 분리 + 피드백 메일)
+## ✅ 이번 라운드 (Naver News 병합 수집)
+
+- [x] **server/sources/naver.js** — Naver Search API (`/v1/search/news.json`), `<b>` 태그 strip, 도메인→매체명 매핑(50+), 10s timeout.
+- [x] **collector 다중 소스 디스패처** — `fetchAllSources(keyword, cfg)` 가 Promise.allSettled 로 Google + Naver 병렬 호출. 한 소스 실패해도 나머지 진행.
+- [x] **소스별 통계** — 리포트에 `sourceCounts: { google, naver }` + ReportDetail / PDF 패널 표시.
+- [x] **UI 토글** — KeywordManager 에 “Google News 사용” / “Naver News 사용” 체크박스. 환경변수 미설정 시 Naver 토글 비활성 + ⚠️ 안내.
+- [x] **/api/health** 가 `sources: { googleNews, naverNews, naverConfigured }` 노출.
+- [x] **.env.example / render.yaml** 에 `NAVER_ENABLED / CLIENT_ID / CLIENT_SECRET` 추가.
+
+## ✅ 직전 라운드 (법무부 특화 + 감정 근거 + PDF 분리 + 피드백 메일)
 
 - [x] **법무부 빠른 키워드** — 핵심·기관·정책 3개 카테고리, 접기/펼치기 UI.
 - [x] **수집 기간 필터** — 24시간 / 3·7·14·30일 / 직접 설정. `publishedAt` 기준 + 기간 외·파싱 실패 카운트.

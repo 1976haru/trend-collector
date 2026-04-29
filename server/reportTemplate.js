@@ -74,6 +74,10 @@ export function renderReportHtml(report) {
     .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}건</td></tr>`).join('');
   const deptRows  = Object.entries(departmentCounts)
     .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}건</td></tr>`).join('');
+  const sourceCounts = report.sourceCounts || {};
+  const sourceRows = Object.entries(sourceCounts).map(([k, v]) =>
+    `<tr><td>${k === 'google' ? '🌍 Google News' : k === 'naver' ? '🇰🇷 Naver News' : esc(k)}</td><td>${v}건</td></tr>`
+  ).join('');
 
   // 목차
   const tocItems = articles.map((a, i) => `
@@ -291,6 +295,13 @@ export function renderReportHtml(report) {
     <tr><th style="width:30%">유형</th><th>건수</th></tr>
     ${mediaRows || '<tr><td colspan="2">—</td></tr>'}
   </table>
+
+  ${sourceRows ? `
+  <h2>🌐 뉴스 소스별 수집량</h2>
+  <table>
+    <tr><th style="width:50%">소스</th><th>건수</th></tr>
+    ${sourceRows}
+  </table>` : ''}
 
   ${deptRows ? `
   <h2>🏛 관련 부서별 보도량</h2>
