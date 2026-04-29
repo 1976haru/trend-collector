@@ -13,7 +13,7 @@ import { loadConfig, saveConfig, listReports, loadReport, saveReport } from './s
 import { runCollection } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
-import { startScheduler } from './scheduler.js';
+import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, '..');
@@ -35,13 +35,21 @@ app.use((req, _res, next) => {
 });
 
 // ── 헬스체크 (Render 무인증 ping) ────────────
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
+  const cfg = await loadConfig();
+  const sch = getSchedulerStatus();
   res.json({
-    ok: true,
-    time:        new Date().toISOString(),
-    smtp:        smtpConfigured(),
-    reportTime:  process.env.REPORT_TIME || '09:00',
+    ok:              true,
+    time:            new Date().toISOString(),
+    smtp:            smtpConfigured(),
     adminConfigured: !!process.env.ADMIN_PASSWORD,
+    schedule: {
+      autoCollect:   cfg.autoCollect !== false,
+      mode:          sch.mode,
+      intervalHours: cfg.intervalHours,
+      reportTime:    cfg.reportTime || process.env.REPORT_TIME || '09:00',
+      nextAt:        sch.nextAt,
+    },
   });
 });
 
@@ -58,21 +66,45 @@ api.get('/config', async (_req, res) => {
 });
 
 api.put('/config', async (req, res) => {
-  const allowed = ['keywords', 'excludes', 'recipients', 'reportType', 'filterAds', 'requireAllInclude'];
+  const allowed = [
+    'keywords', 'excludes', 'recipients', 'reportType', 'filterAds', 'requireAllInclude',
+    'autoCollect', 'scheduleMode', 'intervalHours', 'reportTime',
+    'autoEmail', 'attachPdf',
+    'alertOnNegative', 'alertOnTrending', 'alertOnGov', 'alertOnCentral', 'alertKeywords',
+  ];
   const patch = {};
   for (const k of allowed) {
     if (k in req.body) patch[k] = req.body[k];
   }
-  // 가벼운 검증
-  if (patch.keywords && !Array.isArray(patch.keywords)) return res.status(400).json({ error: 'keywords must be array' });
-  if (patch.excludes && !Array.isArray(patch.excludes)) return res.status(400).json({ error: 'excludes must be array' });
+  // 검증
+  if (patch.keywords && !Array.isArray(patch.keywords))     return res.status(400).json({ error: 'keywords must be array' });
+  if (patch.excludes && !Array.isArray(patch.excludes))     return res.status(400).json({ error: 'excludes must be array' });
+  if (patch.alertKeywords && !Array.isArray(patch.alertKeywords))
+    return res.status(400).json({ error: 'alertKeywords must be array' });
   if (patch.recipients) {
     if (!Array.isArray(patch.recipients)) return res.status(400).json({ error: 'recipients must be array' });
     patch.recipients = patch.recipients
       .map(s => String(s).trim())
       .filter(s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
   }
+  if (patch.scheduleMode && !['daily', 'interval', 'off'].includes(patch.scheduleMode))
+    return res.status(400).json({ error: 'scheduleMode must be daily|interval|off' });
+  if (patch.intervalHours !== undefined) {
+    const n = Number(patch.intervalHours);
+    if (!Number.isFinite(n) || n < 1 || n > 168) return res.status(400).json({ error: 'intervalHours must be 1..168' });
+    patch.intervalHours = Math.round(n);
+  }
+  if (patch.reportTime && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(patch.reportTime))
+    return res.status(400).json({ error: 'reportTime must be HH:MM' });
+
   const next = await saveConfig(patch);
+
+  // 스케줄에 영향 있는 키가 들어왔다면 재구성
+  const SCHED_KEYS = ['autoCollect', 'scheduleMode', 'intervalHours', 'reportTime'];
+  if (SCHED_KEYS.some(k => k in patch)) {
+    try { await restartScheduler(); } catch (e) { console.error('[scheduler] restart error:', e.message); }
+  }
+
   res.json(next);
 });
 
@@ -159,11 +191,8 @@ app.listen(PORT, () => {
   if (!process.env.ADMIN_PASSWORD) {
     console.warn('⚠️  ADMIN_PASSWORD 환경변수가 비어 있습니다. 로그인 시도가 모두 거부됩니다.');
   }
-  if (smtpConfigured()) {
-    startScheduler({ baseUrl: process.env.BASE_URL });
-  } else {
-    console.warn('⚠️  SMTP_HOST 미설정 — 메일 발송 / 일일 자동 메일 비활성화. 수집 자체는 동작합니다.');
-    // SMTP 가 없어도 cron 으로 수집은 돌려야 한다면 startScheduler() 호출 무관.
-    startScheduler({ baseUrl: process.env.BASE_URL });
+  if (!smtpConfigured()) {
+    console.warn('⚠️  SMTP_HOST 미설정 — 자동 메일 발송 비활성. 수집 / 리포트 / 스케줄은 정상 동작합니다.');
   }
+  startScheduler({ baseUrl: process.env.BASE_URL });
 });

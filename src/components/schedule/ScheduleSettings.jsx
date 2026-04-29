@@ -1,36 +1,173 @@
 // ─────────────────────────────────────────────
-// ScheduleSettings.jsx — 서버 cron 상태 표시 (읽기 전용)
-// 실제 시각은 서버 환경변수 REPORT_TIME 으로 관리.
+// ScheduleSettings.jsx — 자동 수집 / 발송 / 알림 풀에디터
 // ─────────────────────────────────────────────
 
-export default function ScheduleSettings({ health }) {
-  const time = health?.reportTime || '09:00';
-  const smtp = !!health?.smtp;
+import { fmtFull, fmtUntil } from '../../utils/datetime.js';
+
+const INTERVAL_OPTIONS = [
+  { v: 6,  label: '6시간마다' },
+  { v: 10, label: '10시간마다' },
+  { v: 12, label: '12시간마다' },
+  { v: 24, label: '24시간마다' },
+  { v: 48, label: '48시간마다' },
+];
+
+export default function ScheduleSettings({ config, health, onUpdate }) {
+  const c = config || {};
+  const h = health || {};
+  const sch = h.schedule || {};
+
+  const set = (patch) => onUpdate(patch);
 
   return (
     <div>
-      <div style={S.panel}>
-        <div style={S.label}>⏰ 자동 수집 스케줄</div>
-        <table style={S.tbl}>
-          <tbody>
-            <tr><th style={S.th}>일일 실행 시각</th><td style={S.td}><strong>매일 {time} (Asia/Seoul)</strong></td></tr>
-            <tr><th style={S.th}>실행 동작</th><td style={S.td}>RSS 수집 → 중복·광고 필터 → 리포트 저장 → 메일 발송</td></tr>
-            <tr><th style={S.th}>SMTP 발송</th><td style={S.td}>{smtp ? '✅ 활성' : '⚠️ SMTP_HOST 미설정 — 메일은 발송되지 않음'}</td></tr>
-          </tbody>
-        </table>
-        <div style={S.tip}>
-          시각을 변경하려면 Render 환경변수 <code>REPORT_TIME</code> 을 <code>HH:MM</code> 형식 (예: <code>08:30</code>) 으로 설정한 뒤 서비스를 재시작하세요.
+      {/* 다음 실행 시각 카드 */}
+      <div style={S.statusCard}>
+        <div style={S.statusLabel}>현재 자동 수집 상태</div>
+        <div style={S.statusValue}>
+          {sch.autoCollect && sch.mode !== 'off' ? (
+            <>
+              <span style={S.dotOn} />
+              {sch.mode === 'daily'
+                ? `매일 ${sch.reportTime || c.reportTime || '09:00'}`
+                : `${sch.intervalHours || c.intervalHours || 6}시간마다`}
+            </>
+          ) : (
+            <>
+              <span style={S.dotOff} />
+              자동 수집 OFF
+            </>
+          )}
         </div>
+        {sch.nextAt && (
+          <div style={S.statusSub}>
+            다음 예정: <strong>{fmtFull(sch.nextAt)}</strong> <span style={{ color: '#94a3b8' }}>({fmtUntil(sch.nextAt)})</span>
+          </div>
+        )}
+      </div>
+
+      {/* 자동 수집 ON/OFF + 모드 선택 */}
+      <div style={S.panel}>
+        <div style={S.label}>⏰ 자동 수집</div>
+
+        <Toggle
+          on={c.autoCollect !== false}
+          onChange={v => set({ autoCollect: v })}
+          label="자동 수집 ON"
+        />
+
+        <div style={{ ...S.sectionLabel, marginTop: 14 }}>수집 모드</div>
+        <div style={S.modeRow}>
+          {[
+            { v: 'daily',    l: '📅 매일 특정 시각' },
+            { v: 'interval', l: '⏱ N시간 간격' },
+            { v: 'off',      l: '⏹ 사용 안 함' },
+          ].map(m => (
+            <button key={m.v}
+              style={{ ...S.modeBtn, ...((c.scheduleMode || 'daily') === m.v ? S.modeOn : {}) }}
+              onClick={() => set({ scheduleMode: m.v })}
+              disabled={c.autoCollect === false}>
+              {m.l}
+            </button>
+          ))}
+        </div>
+
+        {(c.scheduleMode || 'daily') === 'daily' && (
+          <div style={S.field}>
+            <label style={S.fieldLabel}>매일 수집 시각 (KST)</label>
+            <input type="time" style={S.inp}
+              value={c.reportTime || '09:00'}
+              onChange={e => set({ reportTime: e.target.value })} />
+          </div>
+        )}
+
+        {c.scheduleMode === 'interval' && (
+          <div style={S.field}>
+            <label style={S.fieldLabel}>수집 주기</label>
+            <div style={S.intRow}>
+              {INTERVAL_OPTIONS.map(o => (
+                <button key={o.v}
+                  style={{ ...S.intBtn, ...(Number(c.intervalHours) === o.v ? S.intOn : {}) }}
+                  onClick={() => set({ intervalHours: o.v })}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 발송 옵션 */}
+      <div style={S.panel}>
+        <div style={S.label}>📧 자동 발송</div>
+        <Toggle on={c.autoEmail !== false}  onChange={v => set({ autoEmail: v })}
+                label="수집 후 자동으로 메일 발송" />
+        <Toggle on={!!c.attachPdf}          onChange={v => set({ attachPdf: v })}
+                label="PDF 파일 첨부 (P2 — 활성화하면 향후 적용)" />
+        {!h.smtp && (
+          <div style={S.warn}>⚠️ SMTP_HOST 가 설정되어 있지 않아 실제 발송은 비활성 상태입니다.</div>
+        )}
+      </div>
+
+      {/* 알림 트리거 */}
+      <div style={S.panel}>
+        <div style={S.label}>🔔 알림 조건 (메일에 ⚠️ 표시)</div>
+        <Toggle on={!!c.alertOnNegative} onChange={v => set({ alertOnNegative: v })}
+                label="부정 비율 50% 이상" />
+        <Toggle on={!!c.alertOnTrending} onChange={v => set({ alertOnTrending: v })}
+                label="급상승 이슈 발생" />
+        <Toggle on={!!c.alertOnCentral}  onChange={v => set({ alertOnCentral: v })}
+                label="중앙언론 보도 발생" />
+        <Toggle on={!!c.alertOnGov}      onChange={v => set({ alertOnGov: v })}
+                label="정부/공공기관 보도자료 발생" />
+        <div style={S.tip}>
+          💡 위 조건이 만족되면 메일 제목 앞에 ⚠️ 가 붙습니다 (별도 긴급 메일은 P2 후속 작업).
+        </div>
+      </div>
+
+      <div style={S.tip}>
+        💡 환경변수 <code>REPORT_TIME</code> 은 서버 부팅 시 기본값으로만 사용됩니다.
+        실제 운영 중에는 위 설정이 우선합니다.
       </div>
     </div>
   );
 }
 
+function Toggle({ on, onChange, label }) {
+  return (
+    <label style={S.toggle}>
+      <input type="checkbox" checked={!!on} onChange={e => onChange(e.target.checked)} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 const S = {
+  statusCard: { background: '#0d1117', color: 'white', borderRadius: 10, padding: '12px 16px', marginBottom: 11 },
+  statusLabel: { fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.7px' },
+  statusValue: { fontSize: 16, fontWeight: 700, marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 },
+  statusSub:   { fontSize: 12, color: '#cbd5e1', marginTop: 6 },
+  dotOn:  { width: 8, height: 8, borderRadius: '50%', background: '#22c55e' },
+  dotOff: { width: 8, height: 8, borderRadius: '50%', background: '#94a3b8' },
+
   panel: { background: 'white', borderRadius: 12, padding: 15, marginBottom: 11, boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
-  label: { fontSize: 10.5, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 10 },
-  tbl:   { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
-  th:    { textAlign: 'left', color: '#666', fontWeight: 600, padding: '7px 6px', borderBottom: '1px solid #f0ede8', width: '36%' },
-  td:    { padding: '7px 6px', borderBottom: '1px solid #f0ede8' },
-  tip:   { background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: 11, fontSize: 11.5, color: '#92400e', lineHeight: 1.6, marginTop: 12 },
+  label: { fontSize: 10.5, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 12 },
+  sectionLabel: { fontSize: 11.5, fontWeight: 600, color: '#666', marginBottom: 6 },
+
+  toggle: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', fontSize: 13, color: '#222', cursor: 'pointer', userSelect: 'none' },
+
+  modeRow: { display: 'flex', gap: 6, flexWrap: 'wrap' },
+  modeBtn: { flex: '1 1 140px', minHeight: 44, padding: '9px 10px', borderRadius: 8, border: '2px solid #e5e0d8',
+             background: 'white', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#555' },
+  modeOn:  { borderColor: '#0d1117', background: '#0d1117', color: 'white' },
+
+  field:      { marginTop: 12 },
+  fieldLabel: { fontSize: 11.5, fontWeight: 600, color: '#444', display: 'block', marginBottom: 5 },
+  inp:        { padding: '9px 11px', fontSize: 14, border: '2px solid #e5e0d8', borderRadius: 8, outline: 'none', background: '#fafaf8', minWidth: 120 },
+  intRow:     { display: 'flex', gap: 5, flexWrap: 'wrap' },
+  intBtn:     { minHeight: 40, padding: '7px 12px', borderRadius: 8, border: '2px solid #e5e0d8', background: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#555' },
+  intOn:      { borderColor: '#0d1117', background: '#0d1117', color: 'white' },
+
+  warn: { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030', padding: '7px 10px', borderRadius: 7, fontSize: 11.5, marginTop: 8 },
+  tip:  { background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '8px 11px', borderRadius: 8, fontSize: 11.5, lineHeight: 1.6 },
 };

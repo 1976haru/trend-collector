@@ -15,11 +15,27 @@ const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const DEFAULT_CONFIG = {
   keywords:           ['정책', '지자체', '예산'],
   excludes:           [],
-  recipients:         [],         // ["dept@example.go.kr", ...]
-  reportType:         'daily',    // 'daily' | 'weekly'
+  recipients:         [],
+  reportType:         'daily',
   filterAds:          true,
   requireAllInclude:  false,
-  // reportTime 은 환경변수 REPORT_TIME 으로 관리 (재기동 시점에 cron 결정)
+
+  // ── 자동 수집 스케줄 ──────────────────────────
+  autoCollect:        true,                 // 자동 수집 ON/OFF
+  scheduleMode:       'daily',              // 'daily' | 'interval' | 'off'
+  intervalHours:      6,                    // scheduleMode === 'interval' 일 때 6/10/12/24/48
+  reportTime:         '09:00',              // scheduleMode === 'daily' 일 때 HH:MM (KST)
+
+  // ── 자동 발송 옵션 ────────────────────────────
+  autoEmail:          true,                 // 수집 후 메일 자동 발송
+  attachPdf:          false,                // PDF 첨부 (P1: false, P2 에서 본격 지원)
+
+  // ── 알림 트리거 (메일 발송 트리거 보강) ───────
+  alertOnNegative:    true,                 // 부정 비율 50% 이상
+  alertOnTrending:    true,                 // 급상승 이슈 발생
+  alertOnGov:         false,                // 정부/공공기관 보도 발생
+  alertOnCentral:     false,                // 중앙언론 보도 발생
+  alertKeywords:      [],                   // 특정 키워드 포함 시
 };
 
 let configCache = null;

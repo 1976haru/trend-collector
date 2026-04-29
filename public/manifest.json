@@ -1,0 +1,26 @@
+{
+  "name": "Trend Collector",
+  "short_name": "TC",
+  "description": "내부 직원용 언론보도 자동 수집·리포트 시스템",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f0ede8",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
