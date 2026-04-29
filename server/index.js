@@ -46,6 +46,8 @@ app.use((req, _res, next) => {
 app.get('/api/health', async (_req, res) => {
   const cfg = await loadConfig();
   const sch = getSchedulerStatus();
+  const stored = await loadSourceSettings();
+  const naverSource = getNaverSource();   // 'env' | 'admin' | 'none'
   res.json({
     ok:              true,
     time:            new Date().toISOString(),
@@ -56,9 +58,9 @@ app.get('/api/health', async (_req, res) => {
       googleNews:           cfg.useGoogleNews !== false,
       naverNews:            !!cfg.useNaverNews && isNaverConfigured(),
       naverConfigured:      isNaverConfigured(),
-      naverSource:          getNaverSource(),     // 'admin' | 'env' | 'none'
-      hasNaverClientId:     !!(await loadSourceSettings()).naverClientId || !!process.env.NAVER_CLIENT_ID,
-      hasNaverClientSecret: !!(await loadSourceSettings()).naverClientSecret || !!process.env.NAVER_CLIENT_SECRET,
+      naverSource,                         // 'env' | 'admin' | 'none' — env 우선
+      hasNaverClientId:     !!process.env.NAVER_CLIENT_ID || !!stored.naverClientId,
+      hasNaverClientSecret: !!process.env.NAVER_CLIENT_SECRET || !!stored.naverClientSecret,
     },
     trends: {
       enabled:        isTrendsEnabled() && cfg.googleTrendsEnabled !== false,

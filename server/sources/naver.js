@@ -2,9 +2,9 @@
 // sources/naver.js — 네이버 뉴스 검색 API
 // https://developers.naver.com/docs/serviceapi/search/news/news.md
 //
-// 설정 우선순위:
-//   1) 관리자 화면 저장값  data/sourceSettings.json (naverEnabled + clientId + clientSecret)
-//   2) 환경변수            NAVER_ENABLED=true + NAVER_CLIENT_ID + NAVER_CLIENT_SECRET
+// 설정 우선순위 (재배포 후에도 키가 유지되도록 env 를 1순위로):
+//   1) 환경변수            NAVER_CLIENT_ID + NAVER_CLIENT_SECRET (NAVER_ENABLED 기본 true)
+//   2) 관리자 화면 저장값  data/sourceSettings.json (naverEnabled + clientId + clientSecret)
 // ─────────────────────────────────────────────
 
 import { loadSourceSettings } from '../store.js';
@@ -16,21 +16,36 @@ let cachedCreds  = null;          // null = 미설정, 객체 = 활성 자격증
 let cachedSource = 'none';
 let _loaded      = false;
 
+function envHasNaverCreds() {
+  // NAVER_ENABLED 미지정 시 true 로 간주 — 키만 등록하면 바로 사용 가능하도록
+  const enabled = process.env.NAVER_ENABLED === undefined
+    ? true
+    : process.env.NAVER_ENABLED === 'true';
+  return !!(enabled && process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET);
+}
+
 async function resolveCredentials() {
-  // 1) 관리자 저장값 우선
+  // 1) 환경변수 (Render 등 배포 환경)
+  if (envHasNaverCreds()) {
+    return {
+      source:       'env',
+      clientId:     process.env.NAVER_CLIENT_ID,
+      clientSecret: process.env.NAVER_CLIENT_SECRET,
+    };
+  }
+
+  // 2) 관리자 화면 저장값 (보조)
   try {
     const stored = await loadSourceSettings();
     if (stored.naverEnabled && stored.naverClientId && stored.naverClientSecret) {
-      return { source: 'admin', clientId: stored.naverClientId, clientSecret: stored.naverClientSecret };
+      return {
+        source:       'admin',
+        clientId:     stored.naverClientId,
+        clientSecret: stored.naverClientSecret,
+      };
     }
   } catch { /* fall through */ }
 
-  // 2) 환경변수
-  if (process.env.NAVER_ENABLED === 'true'
-      && process.env.NAVER_CLIENT_ID
-      && process.env.NAVER_CLIENT_SECRET) {
-    return { source: 'env', clientId: process.env.NAVER_CLIENT_ID, clientSecret: process.env.NAVER_CLIENT_SECRET };
-  }
   return null;
 }
 

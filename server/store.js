@@ -176,9 +176,19 @@ const DEFAULT_SOURCE_SETTINGS = {
   naverClientSecret: '',
 };
 
-export async function loadSourceSettings() {
+async function ensureSourceFile() {
   await ensureDirs();
   try {
+    await fs.access(SOURCE_PATH());
+  } catch {
+    // 파일이 없으면 기본값으로 자동 생성
+    await fs.writeFile(SOURCE_PATH(), JSON.stringify(DEFAULT_SOURCE_SETTINGS, null, 2), 'utf8');
+  }
+}
+
+export async function loadSourceSettings() {
+  try {
+    await ensureSourceFile();
     const raw = JSON.parse(await fs.readFile(SOURCE_PATH(), 'utf8'));
     return { ...DEFAULT_SOURCE_SETTINGS, ...raw };
   } catch {
@@ -187,16 +197,29 @@ export async function loadSourceSettings() {
 }
 
 export async function saveSourceSettings(patch) {
-  await ensureDirs();
-  const current = await loadSourceSettings();
-  const next = { ...current, ...patch };
-  // secret 빈 문자열로 들어오면 기존 값 유지
-  if (patch.naverClientSecret === undefined || patch.naverClientSecret === '') {
-    next.naverClientSecret = current.naverClientSecret;
+  try {
+    await ensureSourceFile();
+    const current = await loadSourceSettings();
+    const next = { ...current, ...patch };
+    // secret 빈 문자열로 들어오면 기존 값 유지 (실수 덮어쓰기 방지)
+    if (patch.naverClientSecret === undefined || patch.naverClientSecret === '') {
+      next.naverClientSecret = current.naverClientSecret;
+    }
+    // clientId 도 비어 있는 입력으로 기존 값을 지우지 않도록 보호
+    if (patch.naverClientId !== undefined && String(patch.naverClientId).trim() === '') {
+      next.naverClientId = current.naverClientId;
+    }
+    next.updatedAt = new Date().toISOString();
+    // atomic write — 임시파일 → rename
+    const tmp = SOURCE_PATH() + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(next, null, 2), 'utf8');
+    await fs.rename(tmp, SOURCE_PATH());
+    return next;
+  } catch (e) {
+    const err = new Error(`뉴스 소스 설정 저장에 실패했습니다: ${e.message || e}`);
+    err.cause = e;
+    throw err;
   }
-  next.updatedAt = new Date().toISOString();
-  await fs.writeFile(SOURCE_PATH(), JSON.stringify(next, null, 2), 'utf8');
-  return next;
 }
 
 /** API 응답용 — clientSecret 은 절대 평문 반환하지 않고 hasNaverClientSecret 로만 노출. */

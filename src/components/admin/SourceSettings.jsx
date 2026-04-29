@@ -96,14 +96,28 @@ export default function SourceSettings() {
         <div style={S.statusLabel}>현재 적용 상태</div>
         {active.naverConfigured ? (
           <div style={S.statusOk}>
-            ✅ Naver News 활성 — 출처: <strong>{active.naverSource === 'admin' ? '관리자 화면' : '환경변수(.env)'}</strong>
+            ✅ 현재 Naver API는 <strong>
+              {active.naverSource === 'env' ? 'Render 환경변수' : '관리자 저장값'}
+            </strong>에서 사용 중입니다.
           </div>
         ) : (
           <div style={S.statusOff}>
-            ⚠️ Naver News 비활성 — Naver 키가 설정되지 않았습니다.
+            ⚠️ 현재 Naver API는 <strong>미설정</strong> 상태입니다.
             {envHasNaver ? ' (환경변수가 부분적으로만 설정되어 있을 수 있음)' : ''}
           </div>
         )}
+        <div style={S.statusHint}>
+          우선순위: <strong>1) Render 환경변수</strong> → 2) 관리자 저장값
+        </div>
+      </div>
+
+      {/* Render 영구 보존 가이드 */}
+      <div style={S.renderTip}>
+        💡 <strong>Render 재배포 후에도 키를 유지하려면</strong> Render Dashboard → Environment 에
+        <code style={S.code}>NAVER_CLIENT_ID</code> /
+        <code style={S.code}>NAVER_CLIENT_SECRET</code> /
+        <code style={S.code}>NAVER_ENABLED=true</code>
+        를 등록하는 것을 권장합니다. 환경변수가 등록되어 있으면 관리자 저장값보다 우선 적용됩니다.
       </div>
 
       {/* 사용 토글 */}
@@ -194,6 +208,14 @@ const S = {
   statusLabel: { fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.7px' },
   statusOk:    { fontSize: 14, fontWeight: 500, marginTop: 4, color: '#86efac' },
   statusOff:   { fontSize: 14, fontWeight: 500, marginTop: 4, color: '#fdba74' },
+  statusHint:  { fontSize: 11.5, color: '#94a3b8', marginTop: 6 },
+
+  renderTip:   { background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af',
+                 padding: '10px 13px', borderRadius: 8, fontSize: 12, lineHeight: 1.7,
+                 marginBottom: 11 },
+  code:        { background: '#dbeafe', color: '#1e3a8a', padding: '1px 6px',
+                 borderRadius: 4, margin: '0 3px', fontSize: 11.5,
+                 fontFamily: 'SFMono-Regular, Consolas, monospace' },
 
   panel:  { background: 'white', borderRadius: 12, padding: 16, marginBottom: 11, boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
   label:  { fontSize: 11, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 12 },
