@@ -122,6 +122,56 @@ export async function listFeedback({ limit = 200 } = {}) {
   return arr.slice(-limit).reverse();
 }
 
+// ── 메일 설정 (관리자 화면에서 입력) ───────────
+const MAIL_PATH = () => path.join(DATA_DIR, 'mail.json');
+
+const DEFAULT_MAIL_SETTINGS = {
+  enabled:           false,         // 메일 발송 ON/OFF
+  host:              '',
+  port:              587,
+  secure:            false,
+  user:              '',
+  password:          '',            // 평문 저장 (data/ 는 .gitignore)
+  from:              '',
+  feedbackTo:        '',            // 비어 있으면 환경변수 / 기본값 사용
+  reportDefaultTo:   '',            // 정보용 (실제 리포트 수신자는 config.recipients)
+};
+
+export async function loadMailSettings() {
+  await ensureDirs();
+  try {
+    const raw = JSON.parse(await fs.readFile(MAIL_PATH(), 'utf8'));
+    return { ...DEFAULT_MAIL_SETTINGS, ...raw };
+  } catch {
+    return { ...DEFAULT_MAIL_SETTINGS };
+  }
+}
+
+export async function saveMailSettings(patch) {
+  await ensureDirs();
+  const current = await loadMailSettings();
+  const next = { ...current, ...patch };
+  // password 가 빈 문자열로 들어오면 기존 값을 유지
+  if (patch.password === undefined || patch.password === '') next.password = current.password;
+  await fs.writeFile(MAIL_PATH(), JSON.stringify(next, null, 2), 'utf8');
+  return next;
+}
+
+/** API 응답용 — 비밀번호는 절대 반환하지 않고 hasPassword 로만 노출. */
+export function safeMailSettings(s = {}) {
+  return {
+    enabled:         !!s.enabled,
+    host:            s.host || '',
+    port:            Number(s.port || 587),
+    secure:          !!s.secure,
+    user:            s.user || '',
+    hasPassword:     !!s.password,
+    from:            s.from || '',
+    feedbackTo:      s.feedbackTo || '',
+    reportDefaultTo: s.reportDefaultTo || '',
+  };
+}
+
 export async function setFeedbackRead(id, read = true) {
   await ensureDirs();
   let arr = [];

@@ -123,6 +123,12 @@ export const listFeedback         = ()           => request('GET',   '/api/admin
 export const markFeedbackRead     = (id, read=true) => request('PATCH', `/api/admin/feedback/${encodeURIComponent(id)}/read`, { read });
 export const getExtractionStats   = ()           => request('GET',   '/api/admin/extraction-stats');
 
+// 관리자: 메일 설정
+export const getMailSettings      = ()           => request('GET',  '/api/admin/mail-settings');
+export const saveMailSettingsApi  = (patch)      => request('PUT',  '/api/admin/mail-settings', patch);
+export const sendTestMail         = (to, settings, applyBeforeSend) =>
+  request('POST', '/api/admin/mail-settings/test', { to, settings, applyBeforeSend });
+
 // 부정 이슈 전용 PDF (filter=negative)
 export async function downloadNegativePdf(id) {
   const { blob, filename } = await fetchPdfBlob(reportPdfDownloadUrl(id) + '?filter=negative');

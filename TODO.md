@@ -1,6 +1,20 @@
 # 📌 TODO
 
-## ✅ 이번 라운드 (실사용 안정화 — fallback 체인 / 신문풍 PDF / 관리자 페이지)
+## ✅ 이번 라운드 (PDF 이미지 / 인코딩 / 관리자 메일 설정)
+
+- [x] **PDF 이미지 base64 임베드** — `server/imageCache.js` 가 외부 이미지를 서버에서 다운로드 후 `data:image/...;base64` 로 변환. CORS / hotlink / lazy-load / mixed content 모두 회피. `Referer` + `User-Agent` + 적절한 `Accept` 헤더 사용. 5MB 상한, 200byte 미만 트래킹 픽셀 제외. 동일 URL 메모리 LRU 캐시 (200개).
+- [x] **PDF 생성 전 자동 이미지 임베드** — `embedImagesInReport()` 가 모든 article 의 `images[]` + `leadImage` 를 변환. `pdfImageStats` 에 `total/succeeded/failed/articlesWithImage` 저장.
+- [x] **EUC-KR / CP949 인코딩 자동 감지** — `server/encodingDetect.js` (iconv-lite). HTTP charset → meta charset → UTF-8 시도 → 깨짐 비율 5% 초과 시 cp949/euc-kr 재시도. 가장 깨끗한 결과를 채택. 기사에 `encodingUsed` / `garbledRatio` 부착.
+- [x] **articleExtractor fetchHtml** — buffer 기반 + decodeHtmlBuffer 사용. 기존 `text()` 직접 호출 제거.
+- [x] **관리자 메일 설정 화면** — `🛠 관리 → ✉️ 메일 설정` 탭:
+  - SMTP host/port/secure/user/password/from + feedbackTo/reportDefaultTo
+  - 비밀번호는 화면에 절대 표시 안 함 (`hasPassword` flag 만), 빈 값 저장 시 기존 값 유지
+  - 저장 시 transporter 즉시 재생성 (`reloadMailer()`)
+  - 테스트 메일 발송 + 인증/포트/TLS/네트워크 오류 한국어 분류 안내
+- [x] **mailer 우선순위** — `data/mail.json` (UI 설정) → 환경변수 fallback. 서버 부팅 시 `preloadMailer()` 로 캐시.
+- [x] **API**: `GET /api/admin/mail-settings` (mask 처리), `PUT /api/admin/mail-settings`, `POST /api/admin/mail-settings/test`.
+
+## ✅ 직전 라운드 (실사용 안정화 — fallback 체인 / 신문풍 PDF / 관리자 페이지)
 
 - [x] **본문 추출 fallback 체인** — ① fetch+cheerio (어댑터→generic→heuristic) → ② **Puppeteer 페이지 fetch + 재추출** → ③ **원문 페이지 스크린샷** (data: URI) → ④ RSS 메타데이터로 **synthesizedFallback** 본문 합성. 모든 단계가 실패해도 PDF에 빈 페이지가 발생하지 않음.
 - [x] **신문 페이지 풍 PDF** — 제목 24pt Noto Serif KR + letter-spacing -0.5pt, byline 위·아래 보더, 본문 serif 11pt line-height 1.85, justify+keep-all, 첫 단락 첫글자 강조, lead 이미지 105mm full-width, 스크린샷 fallback 표시 영역.

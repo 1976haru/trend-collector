@@ -9,12 +9,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
-import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead } from './store.js';
+import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings } from './store.js';
 import { runCollection, reextractReport } from './collector.js';
-import { sendMail, isConfigured as smtpConfigured } from './mailer.js';
+import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
 import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
+import { embedImagesInReport } from './imageCache.js';
 import { isKakaoEnabled } from './notifyKakao.js';
 import { isNaverConfigured } from './sources/naver.js';
 import { isTrendsEnabled, getProvider as getTrendsProvider } from './trends/googleTrends.js';
@@ -266,6 +267,82 @@ api.patch('/admin/feedback/:id/read', async (req, res) => {
   }
 });
 
+// ── 관리자: 메일 설정 ────────────────────────
+api.get('/admin/mail-settings', async (_req, res) => {
+  try {
+    const stored = await loadMailSettings();
+    const active = await getActiveMailConfig();    // 실제 적용되는 값 (env fallback 포함)
+    res.json({
+      stored: safeMailSettings(stored),
+      active: active ? {
+        source: active.source, host: active.host, port: active.port, secure: active.secure,
+        user: active.user || '', from: active.from || '',
+      } : null,
+      envHasSmtp: !!process.env.SMTP_HOST,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+api.put('/admin/mail-settings', async (req, res) => {
+  try {
+    const allowed = ['enabled', 'host', 'port', 'secure', 'user', 'password', 'from', 'feedbackTo', 'reportDefaultTo'];
+    const patch = {};
+    for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    if (patch.port !== undefined) {
+      const p = Number(patch.port);
+      if (!Number.isFinite(p) || p < 1 || p > 65535) return res.status(400).json({ error: 'port 가 유효하지 않습니다.' });
+      patch.port = Math.round(p);
+    }
+    if (patch.feedbackTo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(patch.feedbackTo))
+      return res.status(400).json({ error: 'feedbackTo 이메일 형식이 올바르지 않습니다.' });
+    const next = await saveMailSettings(patch);
+    reloadMailer();
+    res.json({ ok: true, stored: safeMailSettings(next) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+api.post('/admin/mail-settings/test', async (req, res) => {
+  const to = (req.body?.to || '').trim();
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to))
+    return res.status(400).json({ ok: false, error: 'to 이메일 형식이 올바르지 않습니다.' });
+
+  // 임시 patch 로 테스트하려면 먼저 저장 후 reload
+  if (req.body?.applyBeforeSend) {
+    try {
+      await saveMailSettings(req.body.settings || {});
+      reloadMailer();
+    } catch (e) { /* ignore */ }
+  }
+
+  try {
+    await sendMail({
+      to,
+      subject: '[Trend Collector] 메일 설정 테스트',
+      text:    '이 메일은 Trend Collector 메일 설정 화면에서 보낸 테스트입니다. 정상적으로 도착했다면 SMTP 설정이 올바릅니다.',
+      html:    `<div style="font-family:'Noto Sans KR',sans-serif; line-height:1.6;">
+                  <h3>📨 Trend Collector 메일 설정 테스트</h3>
+                  <p>이 메일은 관리자 화면에서 보낸 <b>테스트 메일</b>입니다.</p>
+                  <p>정상 도착했다면 SMTP 설정이 올바릅니다.</p>
+                  <hr/><div style="color:#888; font-size:12px;">발송 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}</div>
+                </div>`,
+    });
+    res.json({ ok: true, sentTo: to });
+  } catch (e) {
+    // 인증/포트/TLS/네트워크 오류를 사용자 친화적으로 분류
+    const msg = e.message || String(e);
+    let hint = '';
+    if (/EAUTH|535|invalid login|authentication/i.test(msg))   hint = '인증 실패 — 사용자명/비밀번호를 확인하세요.';
+    else if (/ECONNECTION|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH/i.test(msg)) hint = '네트워크/호스트 오류 — SMTP_HOST 와 방화벽을 확인하세요.';
+    else if (/ECONNREFUSED|ETIMEDOUT/i.test(msg))              hint = '연결 거부/타임아웃 — 포트(예: 465 또는 587) 와 secure 설정을 확인하세요.';
+    else if (/TLS|SSL|certificate/i.test(msg))                 hint = 'TLS 오류 — secure 옵션이나 인증서 설정을 확인하세요.';
+    res.status(500).json({ ok: false, error: msg, hint });
+  }
+});
+
 // ── 관리자: 도메인별 본문 추출 실패 통계 ────────
 api.get('/admin/extraction-stats', async (_req, res) => {
   try {
@@ -372,19 +449,22 @@ app.get('/api/reports/:id/html', requireAuth, async (req, res) => {
 // ── 공통: 리포트 ID 로 PDF 버퍼 생성 ───────────
 async function generatePdfFor(id, opts = {}) {
   const orig = await loadReport(id);
-  let report = orig;
+  let working = orig;
   let suffix = '';
   if (opts.filter === 'negative') {
-    // 부정 / 긴급·주의 만 필터링한 리포트로 재구성
     const keep = (orig.articles || []).filter(a =>
       a.sentiment?.label === '부정' || a.priority === '긴급' || a.priority === '주의'
     );
-    report = { ...orig, articles: keep, title: (orig.title || '') + ' (부정 이슈)' };
+    working = { ...orig, articles: keep, title: (orig.title || '') + ' (부정 이슈)' };
     suffix = '-negative';
   }
+  // 이미지를 서버에서 다운로드 → data:base64 로 변환해 PDF 에 임베드
+  const includeImages = orig.includeImages !== false;
+  const { report, stats } = await embedImagesInReport(working, { includeImages });
+  console.log(`[pdf] image embed: ${stats.succeeded}/${stats.total} succeeded, ${stats.articlesWithImage}/${stats.articleTotal} articles have image`);
   const buf     = await htmlToPdf(renderReportHtml(report));
   const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
-  return { buf, fileName: `trend-report-${dateStr}${suffix}.pdf` };
+  return { buf, fileName: `trend-report-${dateStr}${suffix}.pdf`, imageStats: stats };
 }
 
 // ── 리포트 PDF — 미리보기 (inline) ──────────────
@@ -494,6 +574,8 @@ app.listen(PORT, () => {
   if (!isKakaoEnabled()) {
     console.log('ℹ️  카카오 알림: KAKAO_ENABLED 가 true 가 아니므로 비활성 (스텁).');
   }
+  // UI 메일 설정 캐시 미리 로드
+  preloadMailer().catch(() => {});
   startScheduler({ baseUrl: process.env.BASE_URL });
 });
 

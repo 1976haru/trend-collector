@@ -64,6 +64,7 @@ export async function htmlToPdf(html, opts = {}) {
     // 웹폰트 로딩 대기
     try { await page.evaluate(() => document.fonts ? document.fonts.ready : null); } catch {}
     // 이미지 onload 대기 (timeout 으로 PDF 전체 실패 방지)
+    // PDF 의 이미지는 대부분 data: URL 로 임베드되므로 빠르게 complete 됨.
     try {
       await page.evaluate(() => Promise.race([
         Promise.all(
@@ -74,8 +75,15 @@ export async function htmlToPdf(html, opts = {}) {
               img.addEventListener('error', () => res(false), { once: true });
             }))
         ),
-        new Promise(res => setTimeout(res, 8000)),
+        new Promise(res => setTimeout(res, 12000)),
       ]));
+      // 모든 이미지가 정말 그려졌는지 (naturalWidth > 0) 한 번 더 확인 — data URL 깨짐 방어
+      try {
+        await page.waitForFunction(() =>
+          Array.from(document.images).every(img => img.complete && (img.naturalWidth > 0 || img.src === '')),
+          { timeout: 5000 }
+        );
+      } catch {}
     } catch {}
 
     const pdf = await page.pdf({

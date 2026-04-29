@@ -6,6 +6,7 @@
 
 import * as cheerio from 'cheerio';
 import { ensureBrowser } from './pdfGenerator.js';
+import { decodeHtmlBuffer } from './encodingDetect.js';
 
 const TIMEOUT_MS   = 9000;
 const MAX_BYTES    = 2_500_000;
@@ -133,23 +134,28 @@ async function fetchHtml(url) {
     const ct = res.headers.get('content-type') || '';
     if (!/text\/html|application\/xhtml/i.test(ct)) throw new Error(`unsupported ${ct || 'no content-type'}`);
 
+    // 바이트로 받은 뒤 charset 자동 감지 디코딩 (EUC-KR / CP949 안전)
     const reader = res.body?.getReader?.();
+    let buf;
     if (!reader) {
-      const text = await res.text();
-      return { url: res.url, html: text.slice(0, MAX_BYTES) };
+      const ab = await res.arrayBuffer();
+      buf = Buffer.from(ab).slice(0, MAX_BYTES);
+    } else {
+      const chunks = []; let total = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        chunks.push(value);
+        if (total >= MAX_BYTES) { try { await reader.cancel(); } catch {} break; }
+      }
+      const u8 = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { u8.set(c, off); off += c.byteLength; }
+      buf = Buffer.from(u8);
     }
-    const chunks = []; let total = 0;
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      chunks.push(value);
-      if (total >= MAX_BYTES) { try { await reader.cancel(); } catch {} break; }
-    }
-    const buf = new Uint8Array(total);
-    let off = 0;
-    for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
-    return { url: res.url, html: new TextDecoder().decode(buf) };
+    const dec = decodeHtmlBuffer(buf, ct);
+    return { url: res.url, html: dec.text, encoding: dec.encoding, garbledRatio: dec.ratio };
   } finally {
     clearTimeout(timer);
   }
@@ -451,9 +457,12 @@ export async function extractArticle(url, { allowPuppeteer = true, allowScreensh
   let finalUrlGuess = target;
 
   // 1) 일반 fetch + cheerio
+  let encodingUsed = '', garbledRatioVal = 0;
   try {
-    const { html, url: finalUrl } = await fetchHtml(target);
+    const { html, url: finalUrl, encoding, garbledRatio } = await fetchHtml(target);
     finalUrlGuess = finalUrl;
+    encodingUsed   = encoding || '';
+    garbledRatioVal = garbledRatio || 0;
     const adapter = findAdapter(finalUrl) || findAdapter(target);
     const r = extractFromHtml(html, finalUrl, adapter);
     if (r.extracted) {
@@ -461,6 +470,8 @@ export async function extractArticle(url, { allowPuppeteer = true, allowScreensh
         originalUrl,
         resolvedUrl: resolvedUrl || finalUrl,
         ...r,
+        encodingUsed,
+        garbledRatio: garbledRatioVal,
         extractionError: '',
       };
     }
@@ -481,6 +492,8 @@ export async function extractArticle(url, { allowPuppeteer = true, allowScreensh
           originalUrl,
           resolvedUrl: resolvedUrl || finalUrl,
           ...r,
+          encodingUsed: 'puppeteer-utf8',
+          garbledRatio: 0,
           extractionMethod: `puppeteer:${r.extractionMethod}`,
           extractionError: '',
         };
@@ -509,6 +522,8 @@ export async function extractArticle(url, { allowPuppeteer = true, allowScreensh
     extractionMethod: fallbackScreenshot ? 'screenshot' : 'fetch-error',
     extractionQuality: 'failed',
     extractionError: lastError,
+    encodingUsed,
+    garbledRatio: garbledRatioVal,
     fallbackScreenshot,
   };
 }

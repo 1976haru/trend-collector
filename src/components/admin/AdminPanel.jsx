@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import * as api from '../../services/api.js';
 import { fmtFull, fmtRelative } from '../../utils/datetime.js';
+import MailSettings from './MailSettings.jsx';
 
 export default function AdminPanel() {
   const [feedback, setFeedback] = useState([]);
@@ -51,15 +52,23 @@ export default function AdminPanel() {
             <span style={S.tabCount}>{feedback.length}{unread > 0 && ` · 미열람 ${unread}`}</span>
           )}
         </button>
+        <button onClick={() => setTab('mail')}
+          style={{ ...S.tab, ...(tab === 'mail' ? S.tabOn : {}) }}>
+          ✉️ 메일 설정
+        </button>
         <button onClick={() => setTab('stats')}
           style={{ ...S.tab, ...(tab === 'stats' ? S.tabOn : {}) }}>
           📈 추출 실패 도메인 {stats.length > 0 && <span style={S.tabCount}>{stats.length}</span>}
         </button>
         <div style={{ flex: 1 }} />
-        <button onClick={refresh} disabled={loading} style={S.refresh}>
-          {loading ? '⏳' : '↻'} 새로고침
-        </button>
+        {tab !== 'mail' && (
+          <button onClick={refresh} disabled={loading} style={S.refresh}>
+            {loading ? '⏳' : '↻'} 새로고침
+          </button>
+        )}
       </div>
+
+      {tab === 'mail' && <MailSettings />}
 
       {error && <div style={S.err}>⚠️ {error}</div>}
 
