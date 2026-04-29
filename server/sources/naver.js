@@ -164,7 +164,7 @@ function extractSource(url, title) {
  * @param {Object} overrideCreds  명시적 자격증명 — test 용
  * @returns {Promise<Array>} 정규화된 article 배열
  */
-export async function fetchNaverNews(keyword, { display = 30, sort = 'date' } = {}, overrideCreds = null) {
+export async function fetchNaverNews(keyword, { display = 30, sort = 'date', returnRaw = false } = {}, overrideCreds = null) {
   let creds = overrideCreds;
   if (!creds) {
     await ensureLoaded();
@@ -194,9 +194,9 @@ export async function fetchNaverNews(keyword, { display = 30, sort = 'date' } = 
   } finally {
     clearTimeout(timer);
   }
-  if (!Array.isArray(data?.items)) return [];
+  if (!Array.isArray(data?.items)) return returnRaw ? { items: [], total: 0 } : [];
 
-  return data.items.map((it, i) => {
+  const items = data.items.map((it, i) => {
     const title    = stripHtml(it.title);
     const summary  = stripHtml(it.description).slice(0, 300);
     const orig     = (it.originallink || '').trim();
@@ -214,4 +214,5 @@ export async function fetchNaverNews(keyword, { display = 30, sort = 'date' } = 
       sourceProvider: 'naver',
     };
   });
+  return returnRaw ? { items, total: data.total || items.length } : items;
 }

@@ -185,6 +185,7 @@ export async function saveSourceSettings(patch) {
   if (patch.naverClientSecret === undefined || patch.naverClientSecret === '') {
     next.naverClientSecret = current.naverClientSecret;
   }
+  next.updatedAt = new Date().toISOString();
   await fs.writeFile(SOURCE_PATH(), JSON.stringify(next, null, 2), 'utf8');
   return next;
 }
@@ -196,6 +197,7 @@ export function safeSourceSettings(s = {}) {
     naverClientId:          s.naverClientId || '',     // clientId 는 공개 식별자라 평문 OK
     hasNaverClientId:       !!s.naverClientId,
     hasNaverClientSecret:   !!s.naverClientSecret,
+    updatedAt:              s.updatedAt || null,
   };
 }
 

@@ -16,6 +16,7 @@ export default function SourceSettings() {
     naverEnabled: false, naverClientId: '', naverClientSecret: '',
   });
   const [secretTouched, setSecretTouched] = useState(false);
+  const [testKeyword, setTestKeyword] = useState('법무부');
   const [busy, setBusy]       = useState('');
   const [msg,  setMsg]        = useState(null);
 
@@ -71,11 +72,11 @@ export default function SourceSettings() {
   async function runTest() {
     setBusy('test'); setMsg(null);
     try {
-      const r = await api.testNaver();
+      const r = await api.testNaver(testKeyword);
       setMsg({
         type: 'ok',
-        text: `✅ 테스트 성공 — '법무부' 검색 결과 ${r.count}건. 샘플: ${
-          (r.sample || []).map(x => `[${x.source}] ${x.title.slice(0,40)}`).join(' / ')
+        text: `✅ 테스트 성공 — '${r.keyword}' 검색 결과 ${r.count}건 (전체 매칭 ${r.total}건). 샘플 5건:\n${
+          (r.sample || []).slice(0, 5).map((x, i) => `${i+1}. [${x.source}] ${x.title.slice(0,60)}`).join('\n')
         }`,
       });
     } catch (e) {
@@ -143,15 +144,26 @@ export default function SourceSettings() {
           onChange={v => { setForm({ ...form, naverClientSecret: v }); setSecretTouched(true); }}
           hint={stored.hasNaverClientSecret ? '※ 빈 칸으로 두면 기존 저장된 시크릿이 유지됩니다.' : ''} />
 
+        <div style={S.testRow}>
+          <input type="text" value={testKeyword}
+            onChange={e => setTestKeyword(e.target.value)}
+            placeholder="테스트 키워드 (기본: 법무부)"
+            style={S.testInp} />
+        </div>
         <div style={S.actions}>
           <button onClick={save} disabled={busy === 'save'} style={S.saveBtn}>
             {busy === 'save' ? '⏳ 저장 중…' : '💾 저장'}
           </button>
           <button onClick={runTest} disabled={busy === 'test' || !active.naverConfigured} style={S.testBtn}>
-            {busy === 'test' ? '⏳ 테스트 중…' : '🧪 테스트 (법무부 검색)'}
+            {busy === 'test' ? '⏳ 테스트 중…' : '🧪 테스트 검색'}
           </button>
           <button onClick={refresh} disabled={!!busy} style={S.ghost}>↻ 새로고침</button>
         </div>
+        {stored.updatedAt && (
+          <div style={S.updated}>
+            마지막 저장: {new Date(stored.updatedAt).toLocaleString('ko-KR')}
+          </div>
+        )}
         {!active.naverConfigured && (
           <div style={S.tip}>
             💡 테스트하려면 먼저 Naver API 활성화 ON + Client ID·Secret 을 입력 후 <strong>저장</strong>하세요.
@@ -210,7 +222,14 @@ const S = {
          padding: '8px 11px', borderRadius: 7, marginTop: 10 },
 
   ok:  { background: '#dcfce7', border: '1px solid #86efac', color: '#166534',
-         padding: '10px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 },
+         padding: '10px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10,
+         whiteSpace: 'pre-wrap', lineHeight: 1.6 },
   err: { background: '#fee2e2', border: '1px solid #fca5a5', color: '#991b1b',
          padding: '10px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 },
+
+  testRow: { marginTop: 14, marginBottom: 6 },
+  testInp: { width: '100%', padding: '9px 11px', fontSize: 13, minHeight: 40,
+             border: '1.5px solid #e5e0d8', borderRadius: 8, outline: 'none',
+             background: '#fafaf8', fontFamily: 'inherit' },
+  updated: { marginTop: 10, fontSize: 11, color: '#888' },
 };

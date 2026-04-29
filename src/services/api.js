@@ -132,7 +132,7 @@ export const sendTestMail         = (to, settings, applyBeforeSend) =>
 // 관리자: 뉴스 소스 설정
 export const getSourceSettings    = ()           => request('GET',  '/api/admin/source-settings');
 export const saveSourceSettings   = (patch)      => request('PUT',  '/api/admin/source-settings', patch);
-export const testNaver            = ()           => request('POST', '/api/admin/source-settings/test-naver', {});
+export const testNaver            = (keyword)    => request('POST', '/api/admin/source-settings/test-naver', { keyword });
 export const testSearch           = (body)       => request('POST', '/api/admin/test-search', body);
 
 // 부정 이슈 전용 PDF (filter=negative)

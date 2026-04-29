@@ -439,16 +439,19 @@ api.post('/admin/test-search', async (req, res) => {
   }
 });
 
-api.post('/admin/source-settings/test-naver', async (_req, res) => {
+api.post('/admin/source-settings/test-naver', async (req, res) => {
   try {
     if (!isNaverConfigured()) {
       return res.status(400).json({ ok: false, error: 'Naver API 가 활성화되어 있지 않습니다. 먼저 저장 후 시도하세요.' });
     }
-    const items = await fetchNaverNews('법무부', { display: 5, sort: 'date' });
+    const keyword = String(req.body?.keyword || '법무부').trim() || '법무부';
+    const r = await fetchNaverNews(keyword, { display: 10, sort: 'date', returnRaw: true });
     res.json({
       ok: true,
-      count: items.length,
-      sample: items.slice(0, 3).map(x => ({ title: x.title, source: x.source, date: x.date })),
+      keyword,
+      total:  r.total || r.items.length,
+      count:  r.items.length,
+      sample: r.items.slice(0, 5).map(x => ({ title: x.title, source: x.source, date: x.date })),
     });
   } catch (e) {
     const msg = e.message || String(e);
