@@ -157,6 +157,48 @@ export async function saveMailSettings(patch) {
   return next;
 }
 
+// ── 뉴스 소스 설정 (관리자 화면에서 입력) ───────
+const SOURCE_PATH = () => path.join(DATA_DIR, 'sourceSettings.json');
+
+const DEFAULT_SOURCE_SETTINGS = {
+  // 환경변수 NAVER_ENABLED 와 별개로 관리자 화면 토글
+  naverEnabled:      false,
+  naverClientId:     '',
+  naverClientSecret: '',
+};
+
+export async function loadSourceSettings() {
+  await ensureDirs();
+  try {
+    const raw = JSON.parse(await fs.readFile(SOURCE_PATH(), 'utf8'));
+    return { ...DEFAULT_SOURCE_SETTINGS, ...raw };
+  } catch {
+    return { ...DEFAULT_SOURCE_SETTINGS };
+  }
+}
+
+export async function saveSourceSettings(patch) {
+  await ensureDirs();
+  const current = await loadSourceSettings();
+  const next = { ...current, ...patch };
+  // secret 빈 문자열로 들어오면 기존 값 유지
+  if (patch.naverClientSecret === undefined || patch.naverClientSecret === '') {
+    next.naverClientSecret = current.naverClientSecret;
+  }
+  await fs.writeFile(SOURCE_PATH(), JSON.stringify(next, null, 2), 'utf8');
+  return next;
+}
+
+/** API 응답용 — clientSecret 은 절대 평문 반환하지 않고 hasNaverClientSecret 로만 노출. */
+export function safeSourceSettings(s = {}) {
+  return {
+    naverEnabled:           !!s.naverEnabled,
+    naverClientId:          s.naverClientId || '',     // clientId 는 공개 식별자라 평문 OK
+    hasNaverClientId:       !!s.naverClientId,
+    hasNaverClientSecret:   !!s.naverClientSecret,
+  };
+}
+
 /** API 응답용 — 비밀번호는 절대 반환하지 않고 hasPassword 로만 노출. */
 export function safeMailSettings(s = {}) {
   return {

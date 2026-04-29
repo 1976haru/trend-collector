@@ -129,6 +129,11 @@ export const saveMailSettingsApi  = (patch)      => request('PUT',  '/api/admin/
 export const sendTestMail         = (to, settings, applyBeforeSend) =>
   request('POST', '/api/admin/mail-settings/test', { to, settings, applyBeforeSend });
 
+// 관리자: 뉴스 소스 설정
+export const getSourceSettings    = ()           => request('GET',  '/api/admin/source-settings');
+export const saveSourceSettings   = (patch)      => request('PUT',  '/api/admin/source-settings', patch);
+export const testNaver            = ()           => request('POST', '/api/admin/source-settings/test-naver', {});
+
 // 부정 이슈 전용 PDF (filter=negative)
 export async function downloadNegativePdf(id) {
   const { blob, filename } = await fetchPdfBlob(reportPdfDownloadUrl(id) + '?filter=negative');

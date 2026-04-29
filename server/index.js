@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
-import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings } from './store.js';
+import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings } from './store.js';
 import { runCollection, reextractReport } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
@@ -17,7 +17,7 @@ import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } fro
 import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
 import { embedImagesInReport } from './imageCache.js';
 import { isKakaoEnabled } from './notifyKakao.js';
-import { isNaverConfigured } from './sources/naver.js';
+import { isNaverConfigured, getNaverSource, fetchNaverNews, reloadNaver, preloadNaver } from './sources/naver.js';
 import { isTrendsEnabled, getProvider as getTrendsProvider } from './trends/googleTrends.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -50,9 +50,12 @@ app.get('/api/health', async (_req, res) => {
     kakao:           isKakaoEnabled(),
     adminConfigured: !!process.env.ADMIN_PASSWORD,
     sources: {
-      googleNews:      cfg.useGoogleNews !== false,
-      naverNews:       !!cfg.useNaverNews && isNaverConfigured(),
-      naverConfigured: isNaverConfigured(),
+      googleNews:           cfg.useGoogleNews !== false,
+      naverNews:            !!cfg.useNaverNews && isNaverConfigured(),
+      naverConfigured:      isNaverConfigured(),
+      naverSource:          getNaverSource(),     // 'admin' | 'env' | 'none'
+      hasNaverClientId:     !!(await loadSourceSettings()).naverClientId || !!process.env.NAVER_CLIENT_ID,
+      hasNaverClientSecret: !!(await loadSourceSettings()).naverClientSecret || !!process.env.NAVER_CLIENT_SECRET,
     },
     trends: {
       enabled:        isTrendsEnabled() && cfg.googleTrendsEnabled !== false,
@@ -343,6 +346,88 @@ api.post('/admin/mail-settings/test', async (req, res) => {
   }
 });
 
+// ── 관리자: 뉴스 소스 설정 ────────────────────
+api.get('/admin/source-settings', async (_req, res) => {
+  try {
+    const stored = await loadSourceSettings();
+    const cfg    = await loadConfig();
+    const envHas = process.env.NAVER_ENABLED === 'true'
+                    && !!process.env.NAVER_CLIENT_ID
+                    && !!process.env.NAVER_CLIENT_SECRET;
+    res.json({
+      stored: safeSourceSettings(stored),
+      // 키워드 화면 토글값 (config.json 의 useGoogleNews / useNaverNews)
+      preferences: {
+        useGoogleNews: cfg.useGoogleNews !== false,
+        useNaverNews:  !!cfg.useNaverNews,
+      },
+      // 실제 활성 상태
+      naverConfigured: isNaverConfigured(),
+      naverSource:     getNaverSource(),
+      envHasNaver:     envHas,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+api.put('/admin/source-settings', async (req, res) => {
+  try {
+    const b = req.body || {};
+    // 1) 자격증명·토글 → sourceSettings.json
+    const sourcePatch = {};
+    if ('naverEnabled' in b)      sourcePatch.naverEnabled = !!b.naverEnabled;
+    if ('naverClientId' in b)     sourcePatch.naverClientId = String(b.naverClientId || '').trim();
+    if ('naverClientSecret' in b) sourcePatch.naverClientSecret = String(b.naverClientSecret || '');
+    const saved = await saveSourceSettings(sourcePatch);
+
+    // 2) 키워드 화면 사용 토글 → config.json
+    const cfgPatch = {};
+    if ('useGoogleNews' in b) cfgPatch.useGoogleNews = !!b.useGoogleNews;
+    if ('useNaverNews'  in b) cfgPatch.useNaverNews  = !!b.useNaverNews;
+    if (Object.keys(cfgPatch).length) await saveConfig(cfgPatch);
+
+    // 3) Naver 모듈 캐시 재구성
+    reloadNaver();
+    await preloadNaver();
+
+    const cfg = await loadConfig();
+    res.json({
+      ok: true,
+      stored: safeSourceSettings(saved),
+      preferences: {
+        useGoogleNews: cfg.useGoogleNews !== false,
+        useNaverNews:  !!cfg.useNaverNews,
+      },
+      naverConfigured: isNaverConfigured(),
+      naverSource:     getNaverSource(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+api.post('/admin/source-settings/test-naver', async (_req, res) => {
+  try {
+    if (!isNaverConfigured()) {
+      return res.status(400).json({ ok: false, error: 'Naver API 가 활성화되어 있지 않습니다. 먼저 저장 후 시도하세요.' });
+    }
+    const items = await fetchNaverNews('법무부', { display: 5, sort: 'date' });
+    res.json({
+      ok: true,
+      count: items.length,
+      sample: items.slice(0, 3).map(x => ({ title: x.title, source: x.source, date: x.date })),
+    });
+  } catch (e) {
+    const msg = e.message || String(e);
+    let hint = '';
+    if (/HTTP\s*4(00|01|03)|invalid|unauthor/i.test(msg))     hint = '클라이언트 ID 또는 시크릿이 올바르지 않습니다. 네이버 개발자 센터에서 다시 확인하세요.';
+    else if (/HTTP\s*429|quota|limit/i.test(msg))             hint = '일일 호출 한도(25,000건)를 초과했을 수 있습니다.';
+    else if (/network|timeout|getaddrinfo|ENOTFOUND|ECONN/i.test(msg)) hint = '네트워크 오류 — 서버에서 외부 호출이 가능한지 확인하세요.';
+    res.status(500).json({ ok: false, error: msg, hint });
+  }
+});
+
 // ── 관리자: 도메인별 본문 추출 실패 통계 ────────
 api.get('/admin/extraction-stats', async (_req, res) => {
   try {
@@ -574,8 +659,9 @@ app.listen(PORT, () => {
   if (!isKakaoEnabled()) {
     console.log('ℹ️  카카오 알림: KAKAO_ENABLED 가 true 가 아니므로 비활성 (스텁).');
   }
-  // UI 메일 설정 캐시 미리 로드
+  // UI 메일 설정 / 뉴스 소스 캐시 미리 로드
   preloadMailer().catch(() => {});
+  preloadNaver().catch(() => {});
   startScheduler({ baseUrl: process.env.BASE_URL });
 });
 

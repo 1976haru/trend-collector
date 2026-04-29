@@ -5,7 +5,8 @@
 import { useEffect, useState } from 'react';
 import * as api from '../../services/api.js';
 import { fmtFull, fmtRelative } from '../../utils/datetime.js';
-import MailSettings from './MailSettings.jsx';
+import MailSettings   from './MailSettings.jsx';
+import SourceSettings from './SourceSettings.jsx';
 
 export default function AdminPanel() {
   const [feedback, setFeedback] = useState([]);
@@ -56,19 +57,24 @@ export default function AdminPanel() {
           style={{ ...S.tab, ...(tab === 'mail' ? S.tabOn : {}) }}>
           ✉️ 메일 설정
         </button>
+        <button onClick={() => setTab('source')}
+          style={{ ...S.tab, ...(tab === 'source' ? S.tabOn : {}) }}>
+          📰 뉴스 소스 설정
+        </button>
         <button onClick={() => setTab('stats')}
           style={{ ...S.tab, ...(tab === 'stats' ? S.tabOn : {}) }}>
           📈 추출 실패 도메인 {stats.length > 0 && <span style={S.tabCount}>{stats.length}</span>}
         </button>
         <div style={{ flex: 1 }} />
-        {tab !== 'mail' && (
+        {tab !== 'mail' && tab !== 'source' && (
           <button onClick={refresh} disabled={loading} style={S.refresh}>
             {loading ? '⏳' : '↻'} 새로고침
           </button>
         )}
       </div>
 
-      {tab === 'mail' && <MailSettings />}
+      {tab === 'mail'   && <MailSettings />}
+      {tab === 'source' && <SourceSettings />}
 
       {error && <div style={S.err}>⚠️ {error}</div>}
 

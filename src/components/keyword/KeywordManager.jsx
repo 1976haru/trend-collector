@@ -201,7 +201,9 @@ export default function KeywordManager({
             <span>
               <strong>Naver News</strong> 검색 API 사용 (국내 매체 커버리지)
               {!health?.sources?.naverConfigured && (
-                <span style={S.warn}> ⚠️ NAVER_CLIENT_ID / SECRET / NAVER_ENABLED 환경변수 미설정</span>
+                <span style={S.warn}>
+                  {' '}⚠️ Naver API 미설정 — <strong>관리 탭 → 📰 뉴스 소스 설정</strong> 에서 입력하세요.
+                </span>
               )}
             </span>
           </label>
