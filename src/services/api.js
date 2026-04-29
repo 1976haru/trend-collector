@@ -46,6 +46,10 @@ export function reportHtmlUrl(id) {
   return `/api/reports/${encodeURIComponent(id)}/html`;
 }
 
+export function reportPdfUrl(id) {
+  return `/api/reports/${encodeURIComponent(id)}/pdf`;
+}
+
 export function emailReport(id, body = {}) {
   return request('POST', `/api/reports/${encodeURIComponent(id)}/email`, body);
 }

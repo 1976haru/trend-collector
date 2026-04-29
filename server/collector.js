@@ -9,6 +9,7 @@
 import { loadConfig, listReports, loadReport, saveReport } from './store.js';
 import { classifyMedia, countByMediaType, MEDIA_TYPES } from './mediaList.js';
 import { analyzeSentiments } from './sentiment.js';
+import { extractMany } from './articleExtractor.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -255,21 +256,54 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   if (cfg.filterAds) processed = applyAdFilter(processed);
   processed = applyExcludes(processed, cfg.excludes);
 
-  // 2) 각 기사에 mediaType + sentiment 부여
+  // 1.5) PDF 부담을 줄이기 위해 최대 30건으로 제한 (정책 시 — 본문 추출 비용 큼)
+  if (processed.length > 30) processed = processed.slice(0, 30);
+
+  // 2) 각 기사에 mediaType 부여
   for (const a of processed) {
     a.mediaType = classifyMedia(a.source);
   }
-  const sentiment   = analyzeSentiments(processed);   // 내부에서 a.sentiment 부착
-  const mediaCounts = countByMediaType(processed);
+
+  // 3) 본문 추출 (병렬 5)  — 공공기관 내부 업무용으로만 사용.
+  if (cfg.extractContent !== false) {
+    processed = await extractMany(processed, { limit: 5 });
+  }
+
+  // 4) 감정 분석 — 본문이 추출된 기사는 본문도 분석에 사용
+  for (const a of processed) {
+    if (a.contentText && !a.sentimentSource) {
+      // sentiment.js 의 scoreSentiment 가 title/summary 만 사용하므로
+      // contentText 일부를 summary 에 합쳐 정확도 향상
+      a._enrichedSummary = `${a.summary || ''} ${a.contentText.slice(0, 600)}`;
+    }
+  }
+  // 임시 필드를 sentiment 분석 입력으로 활용
+  const sentInput = processed.map(a => ({ ...a, summary: a._enrichedSummary || a.summary }));
+  const sentiment = analyzeSentiments(sentInput);
+  // 결과 라벨을 원본 객체에 복사
+  sentInput.forEach((a, i) => { processed[i].sentiment = a.sentiment; });
+  // 임시 필드 제거
+  for (const a of processed) delete a._enrichedSummary;
+
+  const mediaCounts   = countByMediaType(processed);
   const keywordCounts = countByKeyword(processed);
 
-  // 3) 그룹 / 트렌드 / 요약문
+  // 5) 그룹 / 트렌드 / 요약문
   const groups   = groupByTitle(processed);
   const trending = await detectTrending(keywordCounts);
   const summaryText = buildSummaryText({
     articles: processed, keywords: cfg.keywords,
     mediaCounts, sentiment, trending,
   });
+
+  // 6) 위험 등급 — 부정 비율과 급상승 유무로 결정
+  const riskLevel = computeRiskLevel(sentiment, trending);
+
+  // 7) 본문 추출 통계
+  const extractedCount = processed.filter(a => a.extracted).length;
+  const extractionFailed = processed
+    .filter(a => !a.extracted)
+    .map(a => ({ id: a.id, title: a.title, url: a.url, error: a.extractionError }));
 
   const report = {
     id:          newId(),
@@ -283,14 +317,36 @@ export async function runCollection({ trigger = 'manual' } = {}) {
 
     // 분석
     mediaTypes:    MEDIA_TYPES,
-    mediaCounts,                           // { 중앙언론: n, ... }
-    keywordCounts,                         // { 정책: n, ... }
-    sentiment,                             // { positive, negative, neutral, percents, overall }
-    trending,                              // [{keyword, prev, curr, ratio}]
-    groups,                                // [{signature, leadTitle, leadUrl, sources, count}]
-    summaryText,                           // 자동 요약 문장
+    mediaCounts,
+    keywordCounts,
+    sentiment,
+    trending,
+    groups,
+    summaryText,
+    riskLevel,                             // { level: '안정'|'주의'|'긴급', reasons:[] }
+    extractedCount,
+    extractionFailed,
   };
 
   await saveReport(report);
   return report;
+}
+
+// ── 위험 등급 산출 ──────────────────────────────
+function computeRiskLevel(sentiment = {}, trending = []) {
+  const reasons = [];
+  let level = '안정';
+
+  const negPct = sentiment.negativePct || 0;
+  if (negPct >= 50)      { level = '긴급'; reasons.push(`부정 비율 ${negPct}% (50% 이상)`); }
+  else if (negPct >= 30) { level = '주의'; reasons.push(`부정 비율 ${negPct}% (30% 이상)`); }
+
+  if (trending.length >= 3) {
+    if (level === '안정') level = '주의';
+    reasons.push(`급상승 키워드 ${trending.length}개`);
+  } else if (trending.length >= 1 && level === '안정') {
+    reasons.push(`급상승 키워드 ${trending.length}개`);
+  }
+
+  return { level, reasons };
 }

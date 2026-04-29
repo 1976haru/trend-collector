@@ -59,3 +59,17 @@ services:
       # 추후 LLM 요약을 추가할 때 사용
       - key: OPENAI_API_KEY
         sync: false
+
+      # 카카오톡 알림 (스텁 — 기본 OFF)
+      - key: KAKAO_ENABLED
+        value: "false"
+      - key: KAKAO_ACCESS_TOKEN
+        sync: false
+      - key: KAKAO_TEMPLATE_ID
+        sync: false
+      - key: KAKAO_TARGET_UUID
+        sync: false
+
+      # Puppeteer 캐시 경로 (디스크가 있다면 영구 보관)
+      # - key: PUPPETEER_CACHE_DIR
+      #   value: /var/data/puppeteer-cache

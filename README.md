@@ -1,7 +1,7 @@
-# 📰 Trend Collector — 내부 직원용 업무 리포트 시스템
+# 📰 Trend Collector — 공공기관 내부 업무용 기사 전문 PDF 리포트 시스템
 
-> 키워드 기반 전국 언론보도를 자동 수집해 **분류·감정분석·요약·PDF·메일**까지 한 번에 처리하는 내부 직원용 도구.
-> 단일 비밀번호 로그인 / 외부 공개 X / Render 단일 서비스 배포 / PWA 지원.
+> 키워드 기반 전국 언론보도를 자동 수집하고, **각 기사 본문 전체를 추출**하여 **30건 전문이 포함된 PDF 보고서**를 자동 생성·발송하는 내부 업무용 도구.
+> 단일 비밀번호 로그인 / 외부 공개·재배포 금지 (공공기관 내부 업무용) / Render 단일 서비스 배포 / PWA 지원.
 
 ---
 
@@ -10,13 +10,14 @@
 | 분류 | 내용 |
 |------|------|
 | 🔐 인증 | `ADMIN_PASSWORD` 단일 비밀번호 + HMAC 서명 쿠키 (7일 세션) |
-| 🏷 키워드 | 검색·제외 키워드 등록, AND 검색 토글, 광고/홍보 자동 필터, 모든 직원 공유 |
-| ⏰ 자동 수집 | **즉시 / 6·10·12·24·48시간 간격 / 매일 특정 시각 / OFF**, 설정 변경 시 cron 자동 재기동 |
-| 📊 분석 | 언론 유형 분류(중앙/지방/방송/인터넷/정부·공공기관), **감정 분석(긍/부/중립)**, 급상승 키워드, 중복 기사 묶기, **자동 요약 문장** |
-| 📰 리포트 | 마스터·디테일 UI · CSS 바 차트 · 모든 외부 링크 새 창(`target="_blank"`, `rel="noopener noreferrer"`) |
-| 📄 PDF | 인쇄 친화 HTML 새 창 → 브라우저 PDF 저장 (한글 안전) |
-| 📧 메일 | nodemailer SMTP — 자동 / 수동 발송, 부정·급상승·중앙·정부 트리거 플래그 |
-| 📱 PWA | manifest.json + 192/512 아이콘, 안전영역, 모바일 반응형 |
+| 🏷 키워드 | 검색·제외 키워드, AND 검색, 광고 자동 필터 — 모든 직원 공유 |
+| ⏰ 자동 수집 | **즉시 / 6·10·12·24·48시간 / 매일 특정 시각 / OFF**, 설정 변경 시 cron 자동 재기동 |
+| 📰 본문 추출 | URL 에서 `cheerio` 로 본문 추출 (병렬 5, 타임아웃 8s) — RSS description fallback |
+| 📊 분석 | 언론 유형(중앙/지방/방송/인터넷/정부·공공기관), 감정(긍/부/중립), 급상승 키워드(+200% / +10건), 중복 기사 묶기, 자동 요약 문장, **위험 등급(안정/주의/긴급)** |
+| 📄 **PDF 보고서** | **Puppeteer 서버 생성** — 표지 / 요약 / 목차 / 기사 30건 전문 / 부록. Noto Sans KR 임베드. `GET /api/reports/:id/pdf` 자동 다운로드 (`trend-report-YYYYMMDDHHmm.pdf`) |
+| 📧 메일 | nodemailer SMTP — 본문 HTML + **PDF 첨부 옵션** + 알림 트리거 시 ⚠️ 제목 |
+| 💬 카카오 | 구조 제공 + `KAKAO_ENABLED=true` 토글 (기본 OFF, 실 발송은 P2) |
+| 📱 PWA | manifest.json + 192/512 아이콘, 안전영역, 모바일 반응형, 본문 접기/펼치기 |
 
 ---
 
@@ -92,8 +93,11 @@ https://trend-collector.onrender.com
 | `REPORT_TIME` | | 일일 cron 기본값 `HH:MM` (KST). 운영 중에는 UI 설정이 우선 |
 | `BASE_URL` | | 메일 본문 링크용 절대 URL (예: `https://trend-collector.onrender.com`) |
 | `OPENAI_API_KEY` | | 추후 LLM 요약용 (현재 미사용) |
+| `KAKAO_ENABLED` | | `true` 일 때만 카카오 알림 시도 (기본 false, 스텁) |
+| `KAKAO_ACCESS_TOKEN` `KAKAO_TEMPLATE_ID` `KAKAO_TARGET_UUID` | | 카카오 알림용 (P2) |
 | `DATA_DIR` | | JSON 저장 경로. 기본 `./data` |
 | `PORT` | | Render 가 자동 주입. 로컬 기본 3000 |
+| `PUPPETEER_EXECUTABLE_PATH` | | 시스템 Chrome 경로 지정 (대개 불필요 — npm install 시 자동 다운로드됨) |
 
 ---
 
@@ -116,9 +120,12 @@ https://trend-collector.onrender.com
 ## 📄 PDF 다운로드 방법
 
 1. **리포트** 탭에서 보고서 클릭 → 상세 화면.
-2. 우측 상단 **📄 PDF 다운로드 / 인쇄** 클릭.
-3. 새 창에서 인쇄 친화 HTML 이 열림 → 브라우저 인쇄 다이얼로그 → **PDF 로 저장**.
-4. 한글이 시스템 기본 글꼴(Apple SD Gothic Neo / 맑은 고딕)로 안전하게 렌더링됩니다.
+2. 우측 상단 **📄 PDF 다운로드** 클릭 → 서버가 Puppeteer 로 생성한 PDF 가 즉시 다운로드됩니다.
+3. 파일명: `trend-report-YYYYMMDDHHmm.pdf`.
+4. PDF 구성: 표지(보고서 제목/생성일/키워드/위험등급) → 요약 → 언론 유형 → 중복 묶기 → 목차 → **기사 30건 전문** → 부록.
+5. 자동 발송 시 PDF 첨부도 가능: 키워드 화면 하단 자동 수집 설정에서 “PDF 파일 첨부” 토글.
+
+> 💡 본 시스템은 공공기관 내부 업무용입니다. 추출된 본문은 외부 공개·재배포·상업적 이용을 금지합니다.
 
 ---
 

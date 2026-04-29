@@ -10,7 +10,6 @@ import KeywordManager   from './components/keyword/KeywordManager.jsx';
 import RecentReports    from './components/reports/RecentReports.jsx';
 import ReportDetail     from './components/reports/ReportDetail.jsx';
 import RecipientSettings from './components/recipients/RecipientSettings.jsx';
-import ScheduleSettings  from './components/schedule/ScheduleSettings.jsx';
 
 import { useAuth }    from './hooks/useAuth.js';
 import { useConfig }  from './hooks/useConfig.js';
@@ -99,6 +98,9 @@ export default function App() {
               const r = await rep.collect();
               if (r) { setDetailId(r.id); setTab('reports'); }
             }}
+            config={cfg.config}
+            health={health}
+            onUpdateConfig={cfg.update}
           />
         )}
 
@@ -131,14 +133,6 @@ export default function App() {
             recipients={cfg.config.recipients}
             onAdd={cfg.addRecipient}
             onRemove={cfg.removeRecipient}
-          />
-        )}
-
-        {tab === 'schedule' && (
-          <ScheduleSettings
-            config={cfg.config}
-            health={health}
-            onUpdate={cfg.update}
           />
         )}
       </main>

@@ -16,10 +16,12 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "cheerio": "^1.2.0",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.16",
+    "puppeteer": "^24.42.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

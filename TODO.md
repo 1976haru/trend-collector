@@ -1,48 +1,46 @@
 # 📌 TODO
 
-## ✅ 이번 라운드 완료
+## ✅ 이번 라운드 (기사 전문 PDF · 알림 · UI 통합)
 
-- [x] **링크 표시 수정** — 모든 외부 링크는 React JSX `<a target="_blank" rel="noopener noreferrer">`. 서버 HTML 보고서도 `safeUrl()` 검증 후 출력.
-- [x] **수집 주기 설정** — `daily` / `interval` (6/10/12/24/48h) / `off` 모드, UI 에서 변경 시 cron 자동 재구성.
-- [x] **모든 화면 날짜 표시** — 헤더 라이브 시계, 카드/상세 발행시각/상대시간, 다음 자동수집 예정 시각.
-- [x] **언론 유형 분류** — 중앙/방송/지방/인터넷/정부·공공기관/기타. 보고서에 건수표 + 모바일 친화 CSS 바.
-- [x] **감정 분석(키워드 기반)** — 긍·부 키워드 사전, 가중치, 라벨, 전체 분위기 판정.
-- [x] **PDF 다운로드** — 상세 화면에 명확한 버튼, 인쇄 친화 HTML 새 창.
-- [x] **자동 요약 문장** — “오늘 ‘X’ 관련 보도는 N건…” 템플릿, 부정 우세 시 ⚠️ 대응 권고.
-- [x] **급상승 감지** — 직전 리포트 대비 (200% 이상 증가) or (5→15건 이상) 트리거.
-- [x] **중복 기사 묶기** — 정규화 제목 prefix 기반, 그룹별 대표 기사 + 관련 매체 목록.
-- [x] **모바일 + PWA** — viewport, theme-color, manifest.json, 192/512 아이콘, 안전영역, 반응형 그리드.
-- [x] **스케줄 풀에디터** — 자동 수집 / 자동 발송 / 4가지 알림 트리거 토글.
-- [x] **README/TODO/ROADMAP** 갱신.
+- [x] **기사 본문 추출** — `cheerio` 기반, 휴리스틱 셀렉터 + 광고/추천/기자 제거, 병렬 5, 타임아웃 8초.
+- [x] **기사 30건 전문 PDF** — Puppeteer 서버 생성. 표지 / 요약 / 언론분포 / 중복묶기 / 목차 / **기사 30건 전문** / 부록 구성. Noto Sans KR 임베드.
+- [x] **PDF 다운로드 endpoint** — `GET /api/reports/:id/pdf` (Content-Disposition attachment, `trend-report-YYYYMMDDHHmm.pdf`).
+- [x] **메일 PDF 첨부** — config `attachPdf` 또는 발송 API `attach: true` 시 첨부.
+- [x] **스케줄 UI 위치 변경** — “스케줄” 탭 제거 → 키워드 화면 “지금 즉시 수집” 버튼 바로 아래 인라인.
+- [x] **위험 분석 강화** — 부정 30% → 주의 / 50% → 긴급 / 급상승 ≥3건 → 주의 등.
+- [x] **카카오 알림 구조** — `notifyKakao.js` 스텁, `KAKAO_ENABLED=false` 기본. `/api/health` 에 kakao 상태 노출.
+- [x] **본문 토글** — ReportDetail 의 각 기사에 “본문 펼치기/접기” 버튼.
+- [x] **위험도 배지** — 리포트 상단 + PDF 표지 + 메일 본문 모두 표시.
 
-## 🔜 P1 — 다음 우선
+## 🔜 P1 다음 우선
 
-- [ ] **PDF 파일 첨부 메일** — 현재는 본문 HTML/텍스트. Puppeteer + @sparticuz/chromium 으로 서버 측 PDF 바이너리 생성 후 nodemailer 첨부.
-- [ ] **알림 조건 트리거 → 별도 “긴급 메일”** — 현재는 메일 제목에 ⚠️ 만 붙이는 수준. 부정 50% 이상 / 급상승 / 중앙·정부 보도 시 별도 짧은 알림 메일을 추가 발송.
-- [ ] **로그인 시도 제한 + helmet** — express-rate-limit + helmet 도입.
-- [ ] **실패 RSS 재시도** — 키워드별 1회 재시도 + 백오프.
+- [ ] **Render 환경 Puppeteer 검증** — 실제 Render 빌드/런타임에서 한글 글꼴 렌더링 확인. 필요 시 Pretendard / Noto Sans KR 를 정적 자산으로 번들링하여 외부 CDN 의존 제거.
+- [ ] **본문 추출 성공률 모니터링** — 도메인별 성공률 통계, 자주 실패하는 매체에 셀렉터 추가.
+- [ ] **카카오 비즈 알림톡 실 발송** — 비즈니스 채널 신청 후 access_token 자동 갱신.
+- [ ] **알림 트리거 시 별도 “긴급 메일”** — 현재는 제목 ⚠️ 만. 부정 50%·급상승·중앙·정부 단 발생 시 짧은 알림 메일을 추가 발송.
+- [ ] **로그인 시도 제한** — `express-rate-limit` + `helmet`.
+- [ ] **`nodemailer` v8 / `node-cron` v4 업그레이드** — `npm audit` high/moderate 해소.
 
 ## P2
 
-- [ ] **일간 / 주간 / 월간 분석 탭** — 기간 선택해서 키워드별 보도량, 긍·부 변화, 매체 분포 그래프.
-- [ ] **리포트 내 키워드 / 언론사 검색 + 필터**.
-- [ ] **차트 강화** — 현재는 CSS 바. Recharts 도입 검토 (번들 +150KB 트레이드오프).
-- [ ] **수신자 그룹** — “팀장단 / 실무자” 등 묶음 발송.
-- [ ] **수동 메일 제목 / 머리말 입력** — 발송 시 사용자가 보고서 머리말 추가.
-- [ ] **본문 LLM 요약** — `OPENAI_API_KEY` 또는 Anthropic 키 사용, 서버 측 프록시.
+- [ ] 일·주·월 분석 탭 (기간별 보도량 / 긍부정 / 매체 변화).
+- [ ] 리포트 내 키워드 / 매체 검색·필터.
+- [ ] Recharts 그래프 도입 (CSS 바를 대체).
+- [ ] 수신자 그룹.
+- [ ] 본문 LLM 요약 (`OPENAI_API_KEY` 또는 Anthropic 키, 서버 프록시).
+- [ ] 본문 추출 도메인별 어댑터 시스템.
 
 ## P3
 
-- [ ] **카카오톡 알림** — 비즈니스 채널 알림톡 (유료, ROADMAP).
-- [ ] **사용자별 계정 + 부서별 권한** — 단일 비밀번호 → 다중 토큰.
-- [ ] **DB 마이그레이션** — JSON 파일 → SQLite (단일 파일) 또는 Postgres (Render Postgres / Supabase).
-- [ ] **이슈 임베딩 클러스터링** — 제목 임베딩 → 코사인 유사도 기반 동일 사건 묶기.
-- [ ] **장기 데이터 분석** — 6개월/1년 추세 분석.
+- [ ] **사용자별 계정 + 부서별 권한** (현재는 단일 비밀번호).
+- [ ] **DB 마이그레이션** — JSON → SQLite 또는 Postgres.
+- [ ] 이슈 임베딩 클러스터링.
+- [ ] Slack / Webhook 채널 정식 구현.
 
-## 🐞 알려진 이슈
+## 🐞 알려진 이슈 / 운영 메모
 
-- Render free 플랜은 15분 idle 시 sleep — 자동 cron 신뢰성을 위해 Starter 이상 권장.
-- Render free 플랜의 `data/` 는 재시작 시 휘발 — Render Disk 활성화 또는 P3 DB 마이그레이션.
-- Google News RSS 가 일시 502 를 반환할 수 있음 → `errors` 배열에 키워드별 기록되며 다른 키워드는 정상 진행.
-- `node-cron` 3.x 는 `uuid` v3/v5 의존성으로 `npm audit` moderate 1건 — `node-cron@^4` 로 업그레이드 검토.
-- `nodemailer` 6.x 는 high 취약점 4건 — `^7`/`^8` 업그레이드 후 발송 회귀 테스트 필요.
+- Render free 플랜은 디스크 휘발성 + 15분 idle sleep — Starter 이상 + Disk 권장.
+- Puppeteer 빌드 시 Chromium 다운로드 약 170MB → Render 첫 빌드는 2~3분 소요.
+- 본문 추출 성공률은 매체에 따라 60~90%. 실패 시 RSS description 으로 fallback.
+- Google News RSS URL 은 `news.google.com/articles/...` 형태로 redirect 되며, 일부 도메인은 redirect 후에도 차단할 수 있음.
+- 외부 공개·재배포·상업적 이용 금지. (운영자가 정책 위반 사례를 확인하면 본문 수집을 OFF 로 전환할 수 있도록 `cfg.extractContent=false` 토글이 collector 에 마련되어 있음)

@@ -14,6 +14,8 @@ import { runCollection } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
+import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
+import { isKakaoEnabled } from './notifyKakao.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, '..');
@@ -42,6 +44,7 @@ app.get('/api/health', async (_req, res) => {
     ok:              true,
     time:            new Date().toISOString(),
     smtp:            smtpConfigured(),
+    kakao:           isKakaoEnabled(),
     adminConfigured: !!process.env.ADMIN_PASSWORD,
     schedule: {
       autoCollect:   cfg.autoCollect !== false,
@@ -132,7 +135,7 @@ api.get('/reports/:id', async (req, res) => {
   }
 });
 
-// 메일 발송 (현재 등록된 수신자 또는 본문 to 로)
+// 메일 발송 (PDF 첨부 옵션 지원)
 api.post('/reports/:id/email', async (req, res) => {
   if (!smtpConfigured()) return res.status(400).json({ error: 'SMTP 환경변수가 설정되지 않았습니다.' });
   try {
@@ -140,17 +143,34 @@ api.post('/reports/:id/email', async (req, res) => {
     const cfg    = await loadConfig();
     const to     = Array.isArray(req.body?.to) && req.body.to.length ? req.body.to : cfg.recipients;
     if (!to?.length) return res.status(400).json({ error: '수신자가 없습니다.' });
+
+    const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
+    const fileName = `trend-report-${dateStr}.pdf`;
     const subject = req.body?.subject
       || `[Trend Collector] ${new Date(report.generatedAt).toLocaleDateString('ko-KR')} 보고 (${report.articles.length}건)`;
+
+    // PDF 첨부 옵션 — config.attachPdf 또는 body.attach 가 true 일 때
+    const wantAttach = req.body?.attach !== undefined ? !!req.body.attach : !!cfg.attachPdf;
+    let attachments = [];
+    if (wantAttach) {
+      try {
+        const pdf = await htmlToPdf(renderReportHtml(report));
+        attachments = [{ filename: fileName, content: pdf, contentType: 'application/pdf' }];
+      } catch (e) {
+        console.error('[email] PDF 첨부 실패:', e.message);
+      }
+    }
+
     await sendMail({
       to,
       subject,
       html: renderReportEmailHtml(report, process.env.BASE_URL),
       text: renderReportText(report),
+      attachments,
     });
     report.emailedTo = to;
     await saveReport(report);
-    res.json({ ok: true, sentTo: to });
+    res.json({ ok: true, sentTo: to, attached: attachments.length > 0 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -159,7 +179,6 @@ api.post('/reports/:id/email', async (req, res) => {
 app.use('/api', api);
 
 // ── 리포트 HTML 보기 (인쇄·PDF 저장용) ──────
-// 인증 필요. 새 창으로 열어 브라우저에서 PDF 로 인쇄 저장.
 app.get('/api/reports/:id/html', requireAuth, async (req, res) => {
   try {
     const report = await loadReport(req.params.id);
@@ -167,6 +186,23 @@ app.get('/api/reports/:id/html', requireAuth, async (req, res) => {
     res.send(renderReportHtml(report));
   } catch {
     res.status(404).send('not found');
+  }
+});
+
+// ── 리포트 PDF 다운로드 (Puppeteer 서버 생성) ──
+app.get('/api/reports/:id/pdf', requireAuth, async (req, res) => {
+  try {
+    const report = await loadReport(req.params.id);
+    const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
+    const fileName = `trend-report-${dateStr}.pdf`;
+    const pdf = await htmlToPdf(renderReportHtml(report));
+    res.set('Content-Type',        'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control',       'no-store');
+    res.send(Buffer.from(pdf));
+  } catch (e) {
+    console.error('[pdf] generation error:', e.message);
+    res.status(500).send('PDF 생성 실패: ' + e.message);
   }
 });
 
@@ -194,5 +230,16 @@ app.listen(PORT, () => {
   if (!smtpConfigured()) {
     console.warn('⚠️  SMTP_HOST 미설정 — 자동 메일 발송 비활성. 수집 / 리포트 / 스케줄은 정상 동작합니다.');
   }
+  if (!isKakaoEnabled()) {
+    console.log('ℹ️  카카오 알림: KAKAO_ENABLED 가 true 가 아니므로 비활성 (스텁).');
+  }
   startScheduler({ baseUrl: process.env.BASE_URL });
 });
+
+// 종료 시 Puppeteer 브라우저 정리
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, async () => {
+    try { await shutdownBrowser(); } catch {}
+    process.exit(0);
+  });
+}

@@ -2,7 +2,7 @@
 // RecentReports.jsx — 최근 리포트 목록 (클릭 시 상세)
 // ─────────────────────────────────────────────
 
-import { reportHtmlUrl } from '../../services/api.js';
+import { reportPdfUrl } from '../../services/api.js';
 import { fmtFull, fmtRelative } from '../../utils/datetime.js';
 
 export default function RecentReports({
@@ -44,7 +44,7 @@ export default function RecentReports({
                 </div>
               </div>
               <div style={S.actions} onClick={e => e.stopPropagation()}>
-                <a href={reportHtmlUrl(r.id)} target="_blank" rel="noopener noreferrer" style={S.linkBtn}>
+                <a href={reportPdfUrl(r.id)} target="_blank" rel="noopener noreferrer" style={S.linkBtn}>
                   📄 PDF
                 </a>
                 <button style={S.mail} onClick={() => onEmail(r.id)} disabled={busyId === r.id}>
