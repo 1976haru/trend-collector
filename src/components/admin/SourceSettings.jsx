@@ -14,6 +14,7 @@ export default function SourceSettings() {
   const [form, setForm]       = useState({
     useGoogleNews: true, useNaverNews: false,
     naverEnabled: false, naverClientId: '', naverClientSecret: '',
+    autoTracking: { moj: true, probation: true, corrections: true, immigration: true, prosecution: true, policy: true, other: true },
   });
   const [secretTouched, setSecretTouched] = useState(false);
   const [testKeyword, setTestKeyword] = useState('법무부');
@@ -34,6 +35,15 @@ export default function SourceSettings() {
         naverEnabled:      !!r.stored.naverEnabled,
         naverClientId:     r.stored.naverClientId || '',
         naverClientSecret: '',
+        autoTracking: {
+          moj:         r.stored.autoTracking?.moj         !== false,
+          probation:   r.stored.autoTracking?.probation   !== false,
+          corrections: r.stored.autoTracking?.corrections !== false,
+          immigration: r.stored.autoTracking?.immigration !== false,
+          prosecution: r.stored.autoTracking?.prosecution !== false,
+          policy:      r.stored.autoTracking?.policy      !== false,
+          other:       r.stored.autoTracking?.other       !== false,
+        },
       });
       setSecretTouched(false);
     } catch (e) {
@@ -52,6 +62,7 @@ export default function SourceSettings() {
         useNaverNews:  form.useNaverNews,
         naverEnabled:  form.naverEnabled,
         naverClientId: form.naverClientId,
+        autoTracking:  form.autoTracking,
       };
       // secret 칸 안 건드린 경우 페이로드에서 제외 → 기존 값 유지
       if (secretTouched) patch.naverClientSecret = form.naverClientSecret;
@@ -183,6 +194,35 @@ export default function SourceSettings() {
             💡 테스트하려면 먼저 Naver API 활성화 ON + Client ID·Secret 을 입력 후 <strong>저장</strong>하세요.
           </div>
         )}
+      </div>
+
+      {/* 자동 추적 기준 */}
+      <div style={S.panel}>
+        <div style={S.label}>🤖 자동 추적 기준 — 기관 배포자료 카테고리별 ON/OFF</div>
+        <div style={S.help}>
+          ON 으로 설정된 카테고리의 기사는 수집 직후 자동으로 추적 링크가 생성되어 클릭 수가 집계됩니다.
+          기본값은 모두 ON 이며, 단순 외부 언론 기사는 자동 추적되지 않습니다.
+        </div>
+        {[
+          { k: 'moj',         l: '법무부 본부 (대변인실 / 기획조정실 / 법무실 / 인권국 / 검찰국 / 범죄예방정책국)' },
+          { k: 'probation',   l: '보호직 (보호관찰소 / 준법지원센터 / 소년원 / 청소년비행예방센터 / 치료감호소)' },
+          { k: 'corrections', l: '교정 (교정본부 / 교도소 / 구치소 / 지방교정청)' },
+          { k: 'immigration', l: '출입국 (출입국외국인정책본부 / 출입국·외국인청 / 출입국사무소 / 외국인보호소)' },
+          { k: 'prosecution', l: '검찰 (대검찰청 / 지방검찰청)' },
+          { k: 'policy',      l: '대한민국 정책브리핑 (korea.kr)' },
+          { k: 'other',       l: '기타 .go.kr 정부 도메인' },
+        ].map(({ k, l }) => (
+          <label key={k} style={S.toggleRow}>
+            <input type="checkbox" checked={!!form.autoTracking[k]}
+              onChange={e => setForm({ ...form, autoTracking: { ...form.autoTracking, [k]: e.target.checked } })} />
+            <span>{l}</span>
+          </label>
+        ))}
+        <div style={S.actions}>
+          <button onClick={save} disabled={busy === 'save'} style={S.saveBtn}>
+            {busy === 'save' ? '⏳ 저장 중…' : '💾 자동 추적 기준 저장'}
+          </button>
+        </div>
       </div>
 
       {msg && <div style={msg.type === 'ok' ? S.ok : S.err}>{msg.text}</div>}

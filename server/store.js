@@ -209,6 +209,16 @@ const DEFAULT_SOURCE_SETTINGS = {
   naverEnabled:      false,
   naverClientId:     '',
   naverClientSecret: '',
+  // 자동 추적 — 기관 배포자료 카테고리별 ON/OFF (기본 모두 ON)
+  autoTracking: {
+    moj:         true,
+    probation:   true,
+    corrections: true,
+    immigration: true,
+    prosecution: true,
+    policy:      true,
+    other:       true,
+  },
 };
 
 async function ensureSourceFile() {
@@ -244,6 +254,14 @@ export async function saveSourceSettings(patch) {
     if (patch.naverClientId !== undefined && String(patch.naverClientId).trim() === '') {
       next.naverClientId = current.naverClientId;
     }
+    // autoTracking 패치는 부분 merge — 일부 카테고리만 토글해도 다른 카테고리는 유지
+    if (patch.autoTracking !== undefined) {
+      next.autoTracking = {
+        ...DEFAULT_SOURCE_SETTINGS.autoTracking,
+        ...(current.autoTracking || {}),
+        ...(patch.autoTracking || {}),
+      };
+    }
     next.updatedAt = new Date().toISOString();
     // atomic write — 임시파일 → rename
     const tmp = SOURCE_PATH() + '.tmp';
@@ -259,11 +277,13 @@ export async function saveSourceSettings(patch) {
 
 /** API 응답용 — clientSecret 은 절대 평문 반환하지 않고 hasNaverClientSecret 로만 노출. */
 export function safeSourceSettings(s = {}) {
+  const at = { ...DEFAULT_SOURCE_SETTINGS.autoTracking, ...(s.autoTracking || {}) };
   return {
     naverEnabled:           !!s.naverEnabled,
     naverClientId:          s.naverClientId || '',     // clientId 는 공개 식별자라 평문 OK
     hasNaverClientId:       !!s.naverClientId,
     hasNaverClientSecret:   !!s.naverClientSecret,
+    autoTracking:           at,
     updatedAt:              s.updatedAt || null,
   };
 }
@@ -314,24 +334,128 @@ export async function getTrackingLink(id) {
   return arr.find(l => l.id === id) || null;
 }
 
-export async function createTrackingLink({ title, originalUrl, agency = '', department = '', notes = '' }) {
+function normalizeUrl(u = '') {
+  // 비교용 — querystring tracking 파라미터 제거 / fragment 제거 / 끝의 / 통일
+  try {
+    const url = new URL(String(u).trim());
+    url.hash = '';
+    for (const k of [...url.searchParams.keys()]) {
+      if (/^utm_|^fbclid$|^gclid$|^_ga$/i.test(k)) url.searchParams.delete(k);
+    }
+    let s = url.toString();
+    s = s.replace(/\/$/, '');
+    return s.toLowerCase();
+  } catch { return String(u || '').trim().toLowerCase(); }
+}
+
+export async function createTrackingLink({
+  title, originalUrl, agency = '', department = '', notes = '',
+  // ── 기관 배포자료 자동 추적용 ──
+  trackingMode = 'manual',                  // 'manual' | 'auto'
+  agencyCategory = '',                      // '법무부 본부' / '보호직' / ...
+  officialReleaseType = '',                 // 'moj'|'probation'|'corrections'|'immigration'|'prosecution'|'policy'|'other'
+  reportId = '',                            // 자동 등록 시 어느 리포트에서 왔는지
+  articleId = '',                           // 어느 기사에서 왔는지
+}) {
   if (!title || !originalUrl) throw new Error('title, originalUrl 은 필수입니다.');
   if (!/^https?:\/\//i.test(originalUrl)) throw new Error('originalUrl 은 http(s) URL 이어야 합니다.');
   const arr = await readTrackingArr();
+  // 같은 originalUrl(정규화 비교) 이 이미 있으면 그대로 반환 — 자동 sync 시 중복 생성 방지
+  const norm = normalizeUrl(originalUrl);
+  const existing = arr.find(l => normalizeUrl(l.originalUrl) === norm);
+  if (existing) return existing;
+
+  const now = new Date().toISOString();
   const link = {
-    id:            newTrackingId(),
-    title:         String(title).trim().slice(0, 200),
-    originalUrl:   String(originalUrl).trim(),
-    agency:        String(agency).trim().slice(0, 100),
-    department:    String(department).trim().slice(0, 100),
-    notes:         String(notes).trim().slice(0, 500),
-    createdAt:     new Date().toISOString(),
-    clickCount:    0,
-    lastClickedAt: null,
+    id:                  newTrackingId(),
+    title:               String(title).trim().slice(0, 200),
+    originalUrl:         String(originalUrl).trim(),
+    agency:              String(agency).trim().slice(0, 100),
+    department:          String(department).trim().slice(0, 100),
+    notes:               String(notes).trim().slice(0, 500),
+    trackingMode:        trackingMode === 'auto' ? 'auto' : 'manual',
+    agencyCategory:      String(agencyCategory).slice(0, 60),
+    officialReleaseType: String(officialReleaseType).slice(0, 30),
+    reportId:            String(reportId).slice(0, 60),
+    articleId:           String(articleId).slice(0, 60),
+    createdAt:           now,
+    autoCreatedAt:       trackingMode === 'auto' ? now : null,
+    clickCount:          0,
+    lastClickedAt:       null,
+    clickHistory:        [],     // [{ clickedAt, userAgent, referrer }]
   };
   arr.push(link);
   await writeTrackingArr(arr);
   return link;
+}
+
+/**
+ * 리포트의 기관 배포자료 기사들을 자동 추적 링크로 동기화.
+ * - article 에 isOfficialRelease 필드가 없으면 즉석에서 classifyAgencyArticle 호출 (구버전 리포트 호환)
+ * - 이미 등록된 originalUrl 은 갱신만 (clickCount 보존)
+ * - settings 로 카테고리별 ON/OFF 가능
+ * @returns { created: [], existing: [], skipped: [] }
+ */
+export async function autoSyncReportTrackingLinks(report, opts = {}) {
+  const { autoTracking = {} } = opts;
+  const { DEFAULT_AUTO_TRACKING, shouldAutoTrack, classifyAgencyArticle } = await import('./agencyClassifier.js');
+  const settings = { ...DEFAULT_AUTO_TRACKING, ...autoTracking };
+  const arr = await readTrackingArr();
+  const created = [], existing = [], skipped = [];
+
+  for (const a of (report.articles || [])) {
+    // 분류 필드 누락 시 즉석 분류 (구버전 리포트 호환)
+    let cls;
+    if (a.officialReleaseType !== undefined || a.isOfficialRelease !== undefined) {
+      cls = {
+        isOfficialRelease:   !!a.isOfficialRelease,
+        officialReleaseType: a.officialReleaseType,
+        agencyName:          a.agencyName,
+        agencyCategory:      a.agencyCategory,
+      };
+    } else {
+      cls = classifyAgencyArticle(a);
+    }
+    if (!shouldAutoTrack(cls, settings)) { skipped.push(a.id); continue; }
+    if (!a.url || !/^https?:\/\//i.test(a.url)) { skipped.push(a.id); continue; }
+    const norm = normalizeUrl(a.url);
+    const dup  = arr.find(l => normalizeUrl(l.originalUrl) === norm);
+    if (dup) {
+      // 메타데이터만 보강 (clickCount / clickHistory 는 그대로)
+      dup.agency              = dup.agency || cls.agencyName || a.source || '';
+      dup.agencyCategory      = dup.agencyCategory || cls.agencyCategory || '';
+      dup.officialReleaseType = dup.officialReleaseType || cls.officialReleaseType || '';
+      dup.reportId            = dup.reportId || report.id;
+      dup.articleId           = dup.articleId || a.id;
+      // 자동 sync 시 mode 를 강제로 바꾸지 않는다 — manual 로 만든 것은 manual 로 둔다.
+      existing.push(dup);
+      continue;
+    }
+    const now = new Date().toISOString();
+    const link = {
+      id:                  newTrackingId(),
+      title:               String(a.title || '').trim().slice(0, 200),
+      originalUrl:         a.url,
+      agency:              cls.agencyName || a.source || '',
+      department:          '',
+      notes:               '',
+      trackingMode:        'auto',
+      agencyCategory:      cls.agencyCategory || '',
+      officialReleaseType: cls.officialReleaseType || '',
+      reportId:            report.id || '',
+      articleId:           a.id || '',
+      createdAt:           now,
+      autoCreatedAt:       now,
+      clickCount:          0,
+      lastClickedAt:       null,
+      clickHistory:        [],
+    };
+    arr.push(link);
+    created.push(link);
+  }
+  if (created.length) await writeTrackingArr(arr);
+  else if (existing.length) await writeTrackingArr(arr);  // 메타 보강 저장
+  return { created, existing, skipped, totalAutoLinks: arr.filter(l => l.trackingMode === 'auto').length };
 }
 
 export async function updateTrackingLink(id, patch = {}) {
@@ -356,14 +480,29 @@ export async function deleteTrackingLink(id) {
   return true;
 }
 
-export async function recordTrackingClick(id) {
+/**
+ * 추적 클릭 기록.
+ * 개인정보 최소화 정책: IP 는 저장하지 않는다. userAgent / referrer 만 저장하며,
+ * 보관 이력은 최근 50건으로 자동 절단한다.
+ * @param {string} id
+ * @param {Object} ctx { userAgent?, referrer? }
+ */
+export async function recordTrackingClick(id, ctx = {}) {
   const arr = await readTrackingArr();
   const idx = arr.findIndex(l => l.id === id);
   if (idx < 0) return null;
-  arr[idx].clickCount    = (arr[idx].clickCount || 0) + 1;
-  arr[idx].lastClickedAt = new Date().toISOString();
+  const link = arr[idx];
+  link.clickCount    = (link.clickCount || 0) + 1;
+  const now = new Date().toISOString();
+  link.lastClickedAt = now;
+  // clickHistory — 최근 50건 보존
+  const ua = String(ctx.userAgent || '').slice(0, 250);
+  const rf = String(ctx.referrer || '').slice(0, 250);
+  if (!Array.isArray(link.clickHistory)) link.clickHistory = [];
+  link.clickHistory.push({ clickedAt: now, userAgent: ua, referrer: rf });
+  if (link.clickHistory.length > 50) link.clickHistory = link.clickHistory.slice(-50);
   await writeTrackingArr(arr);
-  return arr[idx];
+  return link;
 }
 
 export async function setFeedbackRead(id, read = true) {

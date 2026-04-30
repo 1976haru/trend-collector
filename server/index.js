@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
 import { loadConfig, saveConfig, listReports, loadReport, saveReport, updateReportPart, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
-  listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick } from './store.js';
+  listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick,
+  autoSyncReportTrackingLinks } from './store.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig, diagnoseMailError } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
@@ -181,7 +182,11 @@ app.get('/r/:id', async (req, res) => {
   try {
     const id = String(req.params.id || '').replace(/[^a-z0-9]/gi, '');
     if (!id) return res.redirect(302, '/');
-    const link = await recordTrackingClick(id);
+    // 개인정보 최소화: IP 는 저장하지 않는다. userAgent / referrer 만 저장.
+    const link = await recordTrackingClick(id, {
+      userAgent: req.get('user-agent') || '',
+      referrer:  req.get('referer') || req.get('referrer') || '',
+    });
     if (!link) return res.redirect(302, '/');
     return res.redirect(302, link.originalUrl);
   } catch (e) {
@@ -410,6 +415,14 @@ api.put('/admin/source-settings', async (req, res) => {
     if ('naverEnabled' in b)      sourcePatch.naverEnabled = !!b.naverEnabled;
     if ('naverClientId' in b)     sourcePatch.naverClientId = String(b.naverClientId || '').trim();
     if ('naverClientSecret' in b) sourcePatch.naverClientSecret = String(b.naverClientSecret || '');
+    // 자동 추적 카테고리 토글 — 부분 merge (saveSourceSettings 가 처리)
+    if (b.autoTracking && typeof b.autoTracking === 'object') {
+      const at = {};
+      for (const k of ['moj', 'probation', 'corrections', 'immigration', 'prosecution', 'policy', 'other']) {
+        if (k in b.autoTracking) at[k] = !!b.autoTracking[k];
+      }
+      sourcePatch.autoTracking = at;
+    }
     const saved = await saveSourceSettings(sourcePatch);
 
     // 2) 키워드 화면 사용 토글 → config.json
@@ -518,11 +531,23 @@ api.post('/admin/source-settings/test-naver', async (req, res) => {
 });
 
 // ── 추적 링크 (보도자료 클릭 카운트) ───────────
-api.get('/tracking-links', async (_req, res) => {
+api.get('/tracking-links', async (req, res) => {
   try {
-    const items = await listTrackingLinks();
+    const all = await listTrackingLinks();
+    // ?mode=auto / ?mode=manual 필터 — UI 탭에서 사용
+    const modeFilter = String(req.query.mode || '').toLowerCase();
+    const items = modeFilter === 'auto'   ? all.filter(l => l.trackingMode === 'auto')
+                : modeFilter === 'manual' ? all.filter(l => l.trackingMode !== 'auto')
+                : all;
     const totalClicks = items.reduce((s, l) => s + (l.clickCount || 0), 0);
-    res.json({ items, count: items.length, totalClicks });
+    const stats = {
+      total:     all.length,
+      auto:      all.filter(l => l.trackingMode === 'auto').length,
+      manual:    all.filter(l => l.trackingMode !== 'auto').length,
+      autoClicks:   all.filter(l => l.trackingMode === 'auto').reduce((s, l) => s + (l.clickCount || 0), 0),
+      manualClicks: all.filter(l => l.trackingMode !== 'auto').reduce((s, l) => s + (l.clickCount || 0), 0),
+    };
+    res.json({ items, count: items.length, totalClicks, stats });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -530,7 +555,9 @@ api.get('/tracking-links', async (_req, res) => {
 
 api.post('/tracking-links', async (req, res) => {
   try {
-    const link = await createTrackingLink(req.body || {});
+    const body = req.body || {};
+    // 사용자가 직접 만드는 링크는 항상 manual — POST 본문의 trackingMode 는 무시
+    const link = await createTrackingLink({ ...body, trackingMode: 'manual' });
     res.json({ ok: true, link });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -552,6 +579,26 @@ api.delete('/tracking-links/:id', async (req, res) => {
     const ok = await deleteTrackingLink(req.params.id);
     if (!ok) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 자동 추적 sync — 특정 리포트의 기관 배포자료를 자동 추적 링크로 등록
+api.post('/tracking-links/auto-sync/:reportId', async (req, res) => {
+  try {
+    const r = await loadReport(req.params.reportId);
+    const settings = await loadSourceSettings();
+    const result = await autoSyncReportTrackingLinks(r, { autoTracking: settings.autoTracking });
+    res.json({
+      ok: true,
+      reportId: r.id,
+      created: result.created.length,
+      existing: result.existing.length,
+      skipped: result.skipped.length,
+      totalAutoLinks: result.totalAutoLinks,
+      createdItems: result.created.map(l => ({ id: l.id, title: l.title, agency: l.agency })),
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

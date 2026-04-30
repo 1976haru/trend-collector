@@ -6,13 +6,14 @@
 //   - summaryText (자동 요약 문장)
 // ─────────────────────────────────────────────
 
-import { loadConfig, listReports, loadReport, saveReport } from './store.js';
+import { loadConfig, listReports, loadReport, saveReport, loadSourceSettings, autoSyncReportTrackingLinks } from './store.js';
 import { classifyMedia, countByMediaType, MEDIA_TYPES } from './mediaList.js';
 import { analyzeSentiments } from './sentiment.js';
 import { extractMany } from './articleExtractor.js';
 import { suggestDepartments, countDepartments } from './departments.js';
 import { fetchNaverNews, isNaverConfigured } from './sources/naver.js';
 import { fetchTrendInterest, fetchRelatedQueries, isTrendsEnabled } from './trends/googleTrends.js';
+import { classifyAgencyArticle } from './agencyClassifier.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -676,10 +677,16 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   };
   console.log('[collector] debugInfo', JSON.stringify(debugInfo));
 
-  // 2) 각 기사에 mediaType + 기관/언론 구분 부여
+  // 2) 각 기사에 mediaType + 기관/언론 구분 부여 + 기관 카테고리/공식배포 여부
+  //    classifyAgencyArticle 은 도메인/매체명/제목 3중 시그널로 isOfficialRelease 정확도 향상.
   for (const a of processed) {
-    a.mediaType   = classifyMedia(a.source);
-    a.articleSource = classifyArticleSource(a);   // 'agency' | 'press'
+    a.mediaType = classifyMedia(a.source);
+    const cls = classifyAgencyArticle(a);
+    a.articleSource       = cls.articleSource;
+    a.isOfficialRelease   = cls.isOfficialRelease;
+    a.agencyName          = cls.agencyName;
+    a.agencyCategory      = cls.agencyCategory;
+    a.officialReleaseType = cls.officialReleaseType;
   }
 
   // 3) 본문 추출 (병렬 5)  — 공공기관 내부 업무용으로만 사용.
@@ -907,6 +914,25 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   };
 
   await saveReport(report);
+
+  // 8) 기관 배포자료 자동 추적 — 수집 직후 자동 sync.
+  //    실패해도 리포트 자체는 저장된 상태이므로 throw 하지 않는다.
+  try {
+    const sourceSettings = await loadSourceSettings();
+    const sync = await autoSyncReportTrackingLinks(report, { autoTracking: sourceSettings.autoTracking });
+    console.log(`[collector] auto-track sync: created=${sync.created.length} existing=${sync.existing.length} skipped=${sync.skipped.length}`);
+    report.autoTrackingSync = {
+      created: sync.created.length,
+      existing: sync.existing.length,
+      skipped: sync.skipped.length,
+      totalAutoLinks: sync.totalAutoLinks,
+      at: new Date().toISOString(),
+    };
+    await saveReport(report);
+  } catch (e) {
+    console.warn('[collector] auto-track sync failed (non-fatal):', e.message);
+  }
+
   return report;
 }
 

@@ -184,22 +184,26 @@ function addReCitationSheet(wb, report) {
   autoFitColumns(ws);
 }
 
-// 5) 클릭 추적 현황
+// 5) 클릭 추적 현황 — 추적방식(자동/수동) + 카테고리 컬럼 추가 (자동/수동 구분 표시)
 function addClickSheet(wb, tracking) {
   const ws = wb.addWorksheet('5.클릭추적현황');
   ws.columns = [
-    { header: '제목',     key: 'title',   width: 50 },
-    { header: '기관/부서', key: 'agency', width: 22 },
-    { header: '클릭 수',  key: 'clicks',  width: 10 },
-    { header: '최근 클릭', key: 'last',   width: 24 },
-    { header: '생성일',   key: 'created', width: 24 },
-    { header: '추적 ID',  key: 'tid',     width: 14 },
-    { header: '원문 URL', key: 'url',     width: 60 },
+    { header: '추적방식',  key: 'mode',    width: 10 },
+    { header: '기관분류',  key: 'cat',     width: 16 },
+    { header: '제목',      key: 'title',   width: 50 },
+    { header: '기관/부서', key: 'agency',  width: 22 },
+    { header: '클릭 수',   key: 'clicks',  width: 10 },
+    { header: '최근 클릭', key: 'last',    width: 24 },
+    { header: '생성일',    key: 'created', width: 24 },
+    { header: '추적 ID',   key: 'tid',     width: 14 },
+    { header: '원문 URL',  key: 'url',     width: 60 },
   ];
   applyHeaderStyle(ws.getRow(1));
   const items = (tracking?.items || []).slice().sort((a, b) => (b.clickCount || 0) - (a.clickCount || 0));
   for (const t of items) {
     const row = ws.addRow({
+      mode:    t.trackingMode === 'auto' ? '자동' : '수동',
+      cat:     t.agencyCategory || '',
       title:   t.title || '',
       agency:  t.agency || t.department || '',
       clicks:  t.clickCount || 0,
@@ -215,8 +219,64 @@ function addClickSheet(wb, tracking) {
     if ((t.clickCount || 0) >= 100) {
       row.getCell('clicks').font = { bold: true, color: { argb: 'FF16A34A' }, name: 'Malgun Gothic' };
     }
+    if (t.trackingMode === 'auto') {
+      row.getCell('mode').font = { bold: true, color: { argb: 'FF1D4ED8' }, name: 'Malgun Gothic' };
+    }
   }
-  if (!items.length) ws.addRow({ title: '— 등록된 추적 링크 없음', agency: '', clicks: 0, last: '', created: '', tid: '', url: '' });
+  if (!items.length) ws.addRow({ mode: '', cat: '', title: '— 등록된 추적 링크 없음', agency: '', clicks: 0, last: '', created: '', tid: '', url: '' });
+  autoFitColumns(ws);
+}
+
+// 6) 자동추적현황 — 기관 배포자료가 자동 등록된 항목 + 기관별 클릭 합계
+function addAutoTrackingSheet(wb, tracking) {
+  const ws = wb.addWorksheet('6.자동추적현황');
+  ws.columns = [
+    { header: '기관분류', key: 'cat',     width: 16 },
+    { header: '기관',     key: 'agency',  width: 22 },
+    { header: '제목',     key: 'title',   width: 50 },
+    { header: '클릭 수',  key: 'clicks',  width: 10 },
+    { header: '최근 클릭', key: 'last',   width: 24 },
+    { header: '추적 URL', key: 'turl',    width: 50 },
+    { header: '원문 URL', key: 'url',     width: 60 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  const auto = (tracking?.items || []).filter(t => t.trackingMode === 'auto')
+    .sort((a, b) => (b.clickCount || 0) - (a.clickCount || 0));
+  const baseUrl = process.env.BASE_URL || '';
+  for (const t of auto) {
+    const tUrl = `${baseUrl || ''}/r/${t.id}`;
+    const row = ws.addRow({
+      cat:     t.agencyCategory || '',
+      agency:  t.agency || '',
+      title:   t.title || '',
+      clicks:  t.clickCount || 0,
+      last:    t.lastClickedAt ? fmtKST(t.lastClickedAt) : '—',
+      turl:    tUrl,
+      url:     t.originalUrl || '',
+    });
+    row.getCell('turl').value = { text: tUrl, hyperlink: tUrl };
+    row.getCell('turl').font  = { color: { argb: 'FF2563EB' }, underline: true, name: 'Malgun Gothic' };
+    if (t.originalUrl) {
+      row.getCell('url').value = { text: t.originalUrl, hyperlink: t.originalUrl };
+      row.getCell('url').font  = { color: { argb: 'FF2563EB' }, underline: true, name: 'Malgun Gothic' };
+    }
+  }
+  if (!auto.length) ws.addRow({ cat: '', agency: '', title: '— 자동 등록된 기관 배포자료 없음', clicks: 0, last: '', turl: '', url: '' });
+
+  // 빈 줄 + 카테고리별 집계
+  ws.addRow({});
+  const head = ws.addRow({ cat: '카테고리별 집계', agency: '건수', title: '클릭 합계' });
+  head.font = { bold: true, name: 'Malgun Gothic' };
+  const byCat = {};
+  for (const t of auto) {
+    const k = t.agencyCategory || '미분류';
+    if (!byCat[k]) byCat[k] = { count: 0, clicks: 0 };
+    byCat[k].count  += 1;
+    byCat[k].clicks += (t.clickCount || 0);
+  }
+  for (const [k, v] of Object.entries(byCat)) {
+    ws.addRow({ cat: k, agency: v.count + '건', title: v.clicks + '회' });
+  }
   autoFitColumns(ws);
 }
 
@@ -356,6 +416,7 @@ export async function reportToXlsx(report, ctx = {}) {
   addArticleSheet(wb, '4.기관배포자료', articles.filter(a => a.articleSource === 'agency'));
   addReCitationSheet(wb, report);
   addClickSheet(wb, tracking);
+  addAutoTrackingSheet(wb, tracking);
   addArticleSheet(wb, '7.부정이슈', articles.filter(a => a.sentiment?.label === '부정'));
   addDeptResponseSheet(wb, report);
   addArticleEditSheet(wb, report);

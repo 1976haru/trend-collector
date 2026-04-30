@@ -159,11 +159,12 @@ export const testNaver            = (keyword)    => request('POST', '/api/admin/
 export const testSearch           = (body)       => request('POST', '/api/admin/test-search', body);
 export const simulateSearch       = (body)       => request('POST', '/api/admin/simulate-search', body);
 
-// 추적 링크
-export const listTrackingLinks    = ()           => request('GET',    '/api/tracking-links');
+// 추적 링크 — mode: '' | 'auto' | 'manual'
+export const listTrackingLinks    = (mode = '') => request('GET',    '/api/tracking-links' + (mode ? `?mode=${encodeURIComponent(mode)}` : ''));
 export const createTrackingLink   = (body)       => request('POST',   '/api/tracking-links', body);
 export const updateTrackingLink   = (id, patch)  => request('PATCH',  `/api/tracking-links/${encodeURIComponent(id)}`, patch);
 export const deleteTrackingLink   = (id)         => request('DELETE', `/api/tracking-links/${encodeURIComponent(id)}`);
+export const autoSyncTrackingLinks = (reportId)  => request('POST',   `/api/tracking-links/auto-sync/${encodeURIComponent(reportId)}`);
 export function trackingRedirectUrl(id) {
   const base = window.location.origin;
   return `${base}/r/${encodeURIComponent(id)}`;

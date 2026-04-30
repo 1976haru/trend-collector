@@ -213,6 +213,7 @@ function renderAnalysisAppendix(report) {
       ${dept.length ? `<h3 class="cl-h3">관련 부서</h3><ul>${dept.map(([k, v]) => `<li>${esc(k)} — ${v}건</li>`).join('')}</ul>` : ''}
       <h3 class="cl-h3">기관 배포자료 현황</h3>
       <p>기관 배포 ${ag.agency || 0}건 / 일반 언론보도 ${ag.press || 0}건 — 재인용 ${report.publicityStats?.totalReCites || 0}건 (중앙·방송 ${report.publicityStats?.centralCoverage || 0}건)</p>
+      ${report.autoTrackingSync ? `<p>자동 추적 등록: 신규 ${report.autoTrackingSync.created}건 · 기존 ${report.autoTrackingSync.existing}건 (총 자동 ${report.autoTrackingSync.totalAutoLinks}건)</p>` : ''}
     </section>
   `;
 }

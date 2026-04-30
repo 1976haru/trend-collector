@@ -425,6 +425,28 @@ export async function reportToDocx(report, ctx = {}) {
     ));
   }
 
+  // 자동 추적 결과 — trackingMode='auto' 만 별도 집계
+  const tItems = trackingTotals.items || [];
+  const autoItems = tItems.filter(t => t.trackingMode === 'auto');
+  if (autoItems.length) {
+    children.push(H2('자동 추적 결과 (기관 배포자료)'));
+    const autoClicks = autoItems.reduce((s, l) => s + (l.clickCount || 0), 0);
+    children.push(P(`자동 등록된 기관 배포자료 ${autoItems.length}건의 누적 클릭 수는 ${autoClicks}회로 집계됨. 이는 사용자가 별도 등록하지 않아도 시스템이 도메인·매체명·제목 기반으로 식별한 결과임.`, { size: 22 }));
+    // 카테고리별 집계
+    const byCat = {};
+    for (const t of autoItems) {
+      const k = t.agencyCategory || '미분류';
+      if (!byCat[k]) byCat[k] = { count: 0, clicks: 0 };
+      byCat[k].count  += 1;
+      byCat[k].clicks += (t.clickCount || 0);
+    }
+    children.push(makeTable(
+      ['기관 분류', '자동 등록 건수', '누적 클릭'],
+      Object.entries(byCat).sort((a, b) => b[1].clicks - a[1].clicks).map(([k, v]) => [k, `${v.count}건`, `${v.clicks}회`]),
+      [40, 30, 30],
+    ));
+  }
+
   // ────────────────────────────────────────────
   // 6. 국민 관심도 / 조회 지표
   // ────────────────────────────────────────────
