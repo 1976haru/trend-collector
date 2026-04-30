@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import * as api from '../../services/api.js';
+import CustomSourceManager from './CustomSourceManager.jsx';
 
 export default function SourceSettings() {
   const [stored, setStored]   = useState(null);
@@ -224,6 +225,9 @@ export default function SourceSettings() {
           </button>
         </div>
       </div>
+
+      {/* 사용자 지정 소스 / 백업·복원 / Render 안내 / 확장 검색 — 별도 컴포넌트로 분리 */}
+      <CustomSourceManager stored={stored} active={active} onChanged={refresh} />
 
       {msg && <div style={msg.type === 'ok' ? S.ok : S.err}>{msg.text}</div>}
     </div>

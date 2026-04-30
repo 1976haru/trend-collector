@@ -87,6 +87,15 @@ export function scoreRelevance(article = {}, keywords = []) {
   const matchedKeywords   = kws.filter(k => matchedSet.has(k));
   const unmatchedKeywords = kws.filter(k => !matchedSet.has(k));
 
+  // 확장 검색으로 추가된 기사 — 사용자 키워드와 직접 매칭이 안 돼도
+  // 확장 키워드(relatedKeywordSource) 가 본문에 있으면 +1 가산
+  if (matchedSet.size === 0 && article.relatedKeywordSource) {
+    const re = normalize(article.relatedKeywordSource);
+    if (re && (fields.title.includes(re) || fields.summary.includes(re) || fields.contentText.includes(re))) {
+      score += 1;
+    }
+  }
+
   const level = score >= 5 ? 'high'
               : score >= 2 ? 'medium'
               : score >= 1 ? 'low'

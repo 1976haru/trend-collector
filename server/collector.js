@@ -15,6 +15,8 @@ import { fetchNaverNews, isNaverConfigured } from './sources/naver.js';
 import { fetchTrendInterest, fetchRelatedQueries, isTrendsEnabled } from './trends/googleTrends.js';
 import { classifyAgencyArticle } from './agencyClassifier.js';
 import { scoreRelevance } from './relevance.js';
+import { fetchOfficialAgencyNews, isOfficialAgencyEnabled, DEFAULT_AGENCY_DOMAINS } from './sources/officialAgency.js';
+import { fetchCustomSourceNews } from './sources/customSources.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -144,7 +146,31 @@ export async function simulateSearch({
  * @param {Object} cfg loadConfig() 결과
  * @returns {Promise<{articles:Array, errors:Array<{keyword,source,error}>}>}
  */
-async function fetchAllSources(keyword, cfg) {
+// 서버측 RELATED_KEYWORDS — 검색 누락 방지용 확장 검색.
+// 크기를 작게 유지하기 위해 가장 자주 누락되는 도메인 키워드만 포함.
+// (UI 의 src/constants/keywordPresets.js 에 더 풍부한 RELATED_KEYWORDS 가 있으나
+//  서버는 가벼운 substitute 만 둔다 — fetch 호출 수 절약)
+const RELATED_KEYWORDS = {
+  '보호관찰':   ['보호관찰소', '전자감독', '준법지원센터'],
+  '보호관찰소': ['보호관찰', '전자감독'],
+  '전자감독':   ['전자발찌', '보호관찰', '위치추적 전자장치'],
+  '소년원':     ['소년분류심사원', '청소년비행예방센터'],
+  '교정':       ['교정본부', '교도소', '구치소'],
+  '교도소':     ['구치소', '수용자'],
+  '출입국':     ['출입국외국인정책본부', '외국인정책', '체류관리'],
+  '검찰':       ['대검찰청', '검찰개혁'],
+  '법무부':     ['법무부 장관', '대변인실'],
+};
+
+function expandKeywords(keyword, enabled = true, alreadySelected = []) {
+  if (!enabled) return [];
+  const list = RELATED_KEYWORDS[keyword] || [];
+  // 이미 사용자가 선택한 키워드는 확장에서 제외 — 중복 호출 방지
+  const sel = new Set(alreadySelected);
+  return list.filter(k => !sel.has(k));
+}
+
+async function fetchAllSources(keyword, cfg, srcSettings = {}) {
   const tasks = [];
   if (cfg.useGoogleNews !== false) {
     tasks.push({ name: 'google', p: fetchRss(keyword) });
@@ -152,6 +178,28 @@ async function fetchAllSources(keyword, cfg) {
   if (cfg.useNaverNews && isNaverConfigured()) {
     tasks.push({ name: 'naver', p: fetchNaverNews(keyword, { display: MAX_PER_KEYWORD }) });
   }
+  // 공식기관 직접 수집 — Google site: 검색
+  if (isOfficialAgencyEnabled(srcSettings)) {
+    const domains = (srcSettings.officialAgencyDomains && srcSettings.officialAgencyDomains.length)
+      ? srcSettings.officialAgencyDomains
+      : DEFAULT_AGENCY_DOMAINS;
+    tasks.push({
+      name: 'officialAgency',
+      p:    fetchOfficialAgencyNews(keyword, { domains, maxPerDomain: 5 }).then(r => {
+        // fetchOfficialAgencyNews 는 { articles, errors } 반환 — 여기서는 articles 만 사용
+        return r.articles;
+      }),
+    });
+  }
+  // 사용자 지정 소스
+  if (Array.isArray(srcSettings.customSources) && srcSettings.customSources.length) {
+    tasks.push({
+      name: 'custom',
+      p:    fetchCustomSourceNews(keyword, { sources: srcSettings.customSources, maxPerSource: 8 })
+              .then(r => r.articles),
+    });
+  }
+
   if (!tasks.length) return { articles: [], errors: [] };
 
   const results = await Promise.allSettled(tasks.map(t => t.p));
@@ -570,14 +618,19 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   if (!cfg.keywords?.length) {
     throw new Error('키워드가 등록되어 있지 않습니다. 먼저 키워드를 추가하세요.');
   }
+  const srcSettings = await loadSourceSettings();
 
   const all    = [];
   const errors = [];
-  // 키워드별 raw 진단
+  // 키워드별 raw 진단 — 4종 소스 (google / naver / officialAgency / custom)
   const rawByKeySrc = {};        // { '보호관찰//google': 25, '보호관찰//naver': 100 }
   const errByKeySrc = {};        // { '보호관찰//naver': 'HTTP 500' }
+  // 확장 키워드 추적 — 보고서에 노출
+  const expandedKeywordsUsed = new Set();
+  const userSelected = (cfg.keywords || []).slice();
+
   for (const kw of cfg.keywords) {
-    const r = await fetchAllSources(kw, cfg);
+    const r = await fetchAllSources(kw, cfg, srcSettings);
     for (const a of (r.articles || [])) {
       const k = `${kw}//${a.sourceProvider || 'unknown'}`;
       rawByKeySrc[k] = (rawByKeySrc[k] || 0) + 1;
@@ -587,9 +640,32 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     }
     all.push(...r.articles);
     errors.push(...r.errors);
+
+    // 확장 검색 — RELATED_KEYWORDS 기반 (관리자 토글 ON 시)
+    if (srcSettings.expandKeywords !== false) {
+      const expanded = expandKeywords(kw, true, userSelected);
+      for (const ek of expanded) {
+        try {
+          const er = await fetchAllSources(ek, cfg, srcSettings);
+          // 확장 결과는 사용자가 선택한 원래 키워드(kw) 와 연결 + relatedKeywordSource 표시
+          for (const a of (er.articles || [])) {
+            a.keyword = kw;                       // 사용자 선택 키워드로 귀속
+            a.relatedKeywordSource = ek;          // 어떤 확장 키워드로 추가됐는지
+            const k = `${kw}//${a.sourceProvider || 'unknown'}//expanded`;
+            rawByKeySrc[k] = (rawByKeySrc[k] || 0) + 1;
+          }
+          all.push(...er.articles);
+          errors.push(...er.errors);
+          expandedKeywordsUsed.add(ek);
+        } catch (e) {
+          // 확장 검색 실패는 무시 — 본 키워드 결과는 이미 수집됨
+          console.warn(`[collector] expansion '${ek}' failed:`, e.message);
+        }
+      }
+    }
   }
   if (all.length === 0 && errors.length === 0) {
-    throw new Error('활성화된 뉴스 소스가 없습니다. Google News / Naver News 둘 중 하나는 켜야 합니다.');
+    throw new Error('활성화된 뉴스 소스가 없습니다. Google News / Naver News / 공식기관 직접 수집 / 사용자 지정 소스 중 하나는 켜야 합니다.');
   }
 
   // 단계별 카운트를 위한 스냅샷
@@ -624,9 +700,9 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   if (processed.length > 30) processed = processed.slice(0, 30);
   const cFinal = countByKeySrc(processed);
 
-  // 진단 데이터 빌드 — 키워드 × 소스 매트릭스
+  // 진단 데이터 빌드 — 키워드 × 소스 매트릭스 (4종)
   const collectionDiagnostics = [];
-  const sources = ['google', 'naver'];
+  const sources = ['google', 'naver', 'officialAgency', 'custom'];
   for (const kw of cfg.keywords) {
     for (const sp of sources) {
       const k = `${kw}//${sp}`;
@@ -901,6 +977,14 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     collectionDiagnostics,
     dateUnknownCount,
     debugInfo,
+    expandedKeywords: Array.from(expandedKeywordsUsed),
+    expansionEnabled: srcSettings.expandKeywords !== false,
+    sourcesUsed: {
+      google:         cfg.useGoogleNews !== false,
+      naver:          cfg.useNaverNews && isNaverConfigured(),
+      officialAgency: isOfficialAgencyEnabled(srcSettings),
+      custom:         (srcSettings.customSources || []).filter(s => s.enabled !== false).length > 0,
+    },
 
     // 분석
     mediaTypes:    MEDIA_TYPES,

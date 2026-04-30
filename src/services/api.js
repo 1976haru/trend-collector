@@ -185,6 +185,19 @@ export const testNaver            = (keyword)    => request('POST', '/api/admin/
 export const testSearch           = (body)       => request('POST', '/api/admin/test-search', body);
 export const simulateSearch       = (body)       => request('POST', '/api/admin/simulate-search', body);
 
+// 사용자 지정 뉴스 소스
+export const listCustomSources   = ()           => request('GET',    '/api/admin/custom-sources');
+export const addCustomSource     = (body)       => request('POST',   '/api/admin/custom-sources', body);
+export const updateCustomSource  = (id, patch)  => request('PATCH',  `/api/admin/custom-sources/${encodeURIComponent(id)}`, patch);
+export const deleteCustomSource  = (id)         => request('DELETE', `/api/admin/custom-sources/${encodeURIComponent(id)}`);
+export const testCustomSource    = (source, keyword = '보호관찰') => request('POST', '/api/admin/custom-sources/test', { source, keyword });
+
+// 뉴스 소스 백업/복원 (Render 무료 플랜 디스크 휘발 대비)
+export function backupSourceSettingsUrl(includeSecrets = false) {
+  return '/api/admin/source-settings/backup' + (includeSecrets ? '?includeSecrets=1' : '');
+}
+export const restoreSourceSettings = (backup) => request('POST', '/api/admin/source-settings/restore', { backup });
+
 // 추적 링크 — mode: '' | 'auto' | 'manual'
 export const listTrackingLinks    = (mode = '') => request('GET',    '/api/tracking-links' + (mode ? `?mode=${encodeURIComponent(mode)}` : ''));
 export const createTrackingLink   = (body)       => request('POST',   '/api/tracking-links', body);

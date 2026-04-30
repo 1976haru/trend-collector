@@ -12,7 +12,10 @@ import authRouter, { requireAuth } from './auth.js';
 import { loadConfig, saveConfig, listReports, loadReport, saveReport, updateReportPart, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
   listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick,
   autoSyncReportTrackingLinks,
-  excludeArticle, restoreArticle, bulkExcludeArticles, bulkRestoreArticles } from './store.js';
+  excludeArticle, restoreArticle, bulkExcludeArticles, bulkRestoreArticles,
+  addCustomSource, updateCustomSource, deleteCustomSource,
+  exportSourceSettingsBackup, importSourceSettingsBackup } from './store.js';
+import { testCustomSource } from './sources/customSources.js';
 import { recomputeReport } from './reportAnalyzer.js';
 import { suggestExclusionCandidates, suggestExcludeWords, scoreRelevance } from './relevance.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
@@ -68,6 +71,11 @@ app.get('/api/health', async (_req, res) => {
       naverSource,                         // 'env' | 'admin' | 'none' — env 우선
       hasNaverClientId:     !!process.env.NAVER_CLIENT_ID || !!stored.naverClientId,
       hasNaverClientSecret: !!process.env.NAVER_CLIENT_SECRET || !!stored.naverClientSecret,
+      // 4 소스 활성 상태 — UI 진단 카드용
+      officialAgencyEnabled: stored.officialAgencyEnabled !== false,
+      customSourcesCount:   (stored.customSources || []).filter(s => s.enabled !== false).length,
+      expandKeywords:       stored.expandKeywords !== false,
+      lastNaverTest:        stored.lastNaverTest || null,
     },
     trends: {
       enabled:        isTrendsEnabled() && cfg.googleTrendsEnabled !== false,
@@ -513,25 +521,97 @@ api.post('/admin/simulate-search', async (req, res) => {
 api.post('/admin/source-settings/test-naver', async (req, res) => {
   try {
     if (!isNaverConfigured()) {
-      return res.status(400).json({ ok: false, error: 'Naver API 가 활성화되어 있지 않습니다. 먼저 저장 후 시도하세요.' });
+      const err = { ok: false, error: 'Naver API 가 활성화되어 있지 않습니다. 먼저 저장 후 시도하세요.' };
+      // 결과를 lastNaverTest 에 기록 — UI 상태 카드용
+      await saveSourceSettings({ lastNaverTest: { ok: false, at: new Date().toISOString(), error: err.error } });
+      return res.status(400).json(err);
     }
-    const keyword = String(req.body?.keyword || '법무부').trim() || '법무부';
+    const keyword = String(req.body?.keyword || '보호관찰').trim() || '보호관찰';
     const r = await fetchNaverNews(keyword, { display: 10, sort: 'date', returnRaw: true });
-    res.json({
+    const result = {
       ok: true,
       keyword,
       total:  r.total || r.items.length,
       count:  r.items.length,
       sample: r.items.slice(0, 5).map(x => ({ title: x.title, source: x.source, date: x.date })),
-    });
+    };
+    await saveSourceSettings({ lastNaverTest: {
+      ok: true, at: new Date().toISOString(), keyword,
+      total: result.total, returnedCount: result.count,
+      source: getNaverSource(),
+    }});
+    res.json(result);
   } catch (e) {
     const msg = e.message || String(e);
     let hint = '';
-    if (/HTTP\s*4(00|01|03)|invalid|unauthor/i.test(msg))     hint = '클라이언트 ID 또는 시크릿이 올바르지 않습니다. 네이버 개발자 센터에서 다시 확인하세요.';
-    else if (/HTTP\s*429|quota|limit/i.test(msg))             hint = '일일 호출 한도(25,000건)를 초과했을 수 있습니다.';
-    else if (/network|timeout|getaddrinfo|ENOTFOUND|ECONN/i.test(msg)) hint = '네트워크 오류 — 서버에서 외부 호출이 가능한지 확인하세요.';
-    res.status(500).json({ ok: false, error: msg, hint });
+    let category = 'unknown';
+    if (/HTTP\s*4(00|01|03)|invalid|unauthor/i.test(msg))     { hint = '클라이언트 ID 또는 시크릿이 올바르지 않습니다. 네이버 개발자 센터에서 다시 확인하세요.'; category = 'auth'; }
+    else if (/HTTP\s*429|quota|limit/i.test(msg))              { hint = '일일 호출 한도(25,000건)를 초과했을 수 있습니다.'; category = 'quota'; }
+    else if (/network|timeout|getaddrinfo|ENOTFOUND|ECONN/i.test(msg)) { hint = '네트워크 오류 — 서버에서 외부 호출이 가능한지 확인하세요.'; category = 'network'; }
+    else if (/설정되지 않/.test(msg))                            { hint = 'NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 가 설정되어 있는지 확인하세요.'; category = 'missing'; }
+    await saveSourceSettings({ lastNaverTest: { ok: false, at: new Date().toISOString(), error: msg, hint, category }});
+    res.status(500).json({ ok: false, error: msg, hint, category });
   }
+});
+
+// ── 사용자 지정 뉴스 소스 CRUD ───────────────────
+api.get('/admin/custom-sources', async (_req, res) => {
+  try {
+    const s = await loadSourceSettings();
+    res.json({ items: s.customSources || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+api.post('/admin/custom-sources', async (req, res) => {
+  try {
+    const item = await addCustomSource(req.body || {});
+    res.json({ ok: true, item });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+api.patch('/admin/custom-sources/:id', async (req, res) => {
+  try {
+    const item = await updateCustomSource(req.params.id, req.body || {});
+    if (!item) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, item });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+api.delete('/admin/custom-sources/:id', async (req, res) => {
+  try {
+    await deleteCustomSource(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+api.post('/admin/custom-sources/test', async (req, res) => {
+  try {
+    const r = await testCustomSource(req.body?.source || {}, req.body?.keyword || '보호관찰');
+    res.json(r);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── 백업 / 복원 (Render 무료 플랜 디스크 휘발 대비) ─────
+api.get('/admin/source-settings/backup', async (req, res) => {
+  try {
+    const includeSecrets = req.query.includeSecrets === '1';
+    const data = await exportSourceSettingsBackup({ includeSecrets });
+    const fileName = `trend-collector-source-settings-${includeSecrets ? 'with-secrets-' : ''}${new Date().toISOString().slice(0, 10)}.json`;
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.set('Cache-Control', 'no-store');
+    res.send(JSON.stringify(data, null, 2));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+api.post('/admin/source-settings/restore', async (req, res) => {
+  try {
+    const saved = await importSourceSettingsBackup(req.body?.backup || req.body || {});
+    // Naver 모듈 캐시 재구성
+    reloadNaver();
+    await preloadNaver();
+    res.json({
+      ok: true,
+      stored: safeSourceSettings(saved),
+      naverConfigured: isNaverConfigured(),
+      naverSource:     getNaverSource(),
+    });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ── 추적 링크 (보도자료 클릭 카운트) ───────────

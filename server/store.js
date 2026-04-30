@@ -212,6 +212,15 @@ const DEFAULT_SOURCE_SETTINGS = {
   naverEnabled:      false,
   naverClientId:     '',
   naverClientSecret: '',
+  // 공식 기관 보도자료 직접 수집 (Google site: 검색)
+  officialAgencyEnabled: true,
+  officialAgencyDomains: [],          // 빈 배열 → DEFAULT_AGENCY_DOMAINS 사용
+  // 사용자 지정 뉴스 소스 (RSS / 검색 URL 템플릿)
+  customSources: [],
+  // 검색 누락 보완 — RELATED_KEYWORDS 기반 확장 검색 ON/OFF
+  expandKeywords: true,
+  // Naver API 마지막 테스트 결과 (UI 상태 카드용)
+  lastNaverTest: null,                // { ok, at, keyword, total, returnedCount, error?, source }
   // 자동 추적 — 기관 배포자료 카테고리별 ON/OFF (기본 모두 ON)
   autoTracking: {
     moj:         true,
@@ -265,6 +274,18 @@ export async function saveSourceSettings(patch) {
         ...(patch.autoTracking || {}),
       };
     }
+    // customSources 는 전체 교체 (CRUD 는 별도 함수로 처리)
+    if (patch.customSources !== undefined && Array.isArray(patch.customSources)) {
+      next.customSources = patch.customSources;
+    }
+    if (patch.officialAgencyDomains !== undefined && Array.isArray(patch.officialAgencyDomains)) {
+      next.officialAgencyDomains = patch.officialAgencyDomains
+        .map(s => String(s).trim().toLowerCase())
+        .filter(Boolean);
+    }
+    if ('officialAgencyEnabled' in patch) next.officialAgencyEnabled = !!patch.officialAgencyEnabled;
+    if ('expandKeywords' in patch)        next.expandKeywords        = !!patch.expandKeywords;
+    if (patch.lastNaverTest !== undefined) next.lastNaverTest = patch.lastNaverTest;
     next.updatedAt = new Date().toISOString();
     // atomic write — 임시파일 → rename
     const tmp = SOURCE_PATH() + '.tmp';
@@ -281,14 +302,124 @@ export async function saveSourceSettings(patch) {
 /** API 응답용 — clientSecret 은 절대 평문 반환하지 않고 hasNaverClientSecret 로만 노출. */
 export function safeSourceSettings(s = {}) {
   const at = { ...DEFAULT_SOURCE_SETTINGS.autoTracking, ...(s.autoTracking || {}) };
+  // customSources 는 평문 노출 OK (URL/이름은 secret 아님)
+  const cs = Array.isArray(s.customSources) ? s.customSources : [];
   return {
     naverEnabled:           !!s.naverEnabled,
     naverClientId:          s.naverClientId || '',     // clientId 는 공개 식별자라 평문 OK
     hasNaverClientId:       !!s.naverClientId,
     hasNaverClientSecret:   !!s.naverClientSecret,
+    officialAgencyEnabled:  s.officialAgencyEnabled !== false,
+    officialAgencyDomains:  Array.isArray(s.officialAgencyDomains) ? s.officialAgencyDomains : [],
+    customSources:          cs.map(x => ({
+      id: x.id, name: x.name || '', url: x.url || '', type: x.type || 'rss',
+      agencyCategory: x.agencyCategory || '', enabled: x.enabled !== false,
+      createdAt: x.createdAt || null,
+    })),
+    expandKeywords:         s.expandKeywords !== false,
+    lastNaverTest:          s.lastNaverTest || null,
     autoTracking:           at,
     updatedAt:              s.updatedAt || null,
   };
+}
+
+// ── 사용자 지정 뉴스 소스 CRUD ─────────────────
+function newCustomSourceId() {
+  return 'cs_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function validateCustomSource(src) {
+  const errs = [];
+  if (!src.name || !String(src.name).trim()) errs.push('name 은 필수입니다.');
+  if (!src.url || !/^https?:\/\//i.test(src.url)) errs.push('url 은 http(s) 형식이어야 합니다.');
+  const t = src.type || 'rss';
+  if (!['rss', 'search'].includes(t)) errs.push('type 은 rss / search 중 하나여야 합니다.');
+  if (errs.length) throw new Error(errs.join(' '));
+}
+
+export async function addCustomSource(src) {
+  validateCustomSource(src);
+  const cur = await loadSourceSettings();
+  const list = Array.isArray(cur.customSources) ? cur.customSources : [];
+  const item = {
+    id:             newCustomSourceId(),
+    name:           String(src.name).trim().slice(0, 80),
+    url:            String(src.url).trim(),
+    type:           ['rss', 'search'].includes(src.type) ? src.type : 'rss',
+    agencyCategory: String(src.agencyCategory || '').slice(0, 60),
+    enabled:        src.enabled !== false,
+    createdAt:      new Date().toISOString(),
+  };
+  list.push(item);
+  await saveSourceSettings({ customSources: list });
+  return item;
+}
+
+export async function updateCustomSource(id, patch) {
+  const cur = await loadSourceSettings();
+  const list = (cur.customSources || []).slice();
+  const idx = list.findIndex(x => x.id === id);
+  if (idx < 0) return null;
+  const merged = { ...list[idx], ...patch };
+  validateCustomSource(merged);
+  list[idx] = {
+    ...list[idx],
+    name:           String(merged.name).trim().slice(0, 80),
+    url:            String(merged.url).trim(),
+    type:           ['rss', 'search'].includes(merged.type) ? merged.type : 'rss',
+    agencyCategory: String(merged.agencyCategory || '').slice(0, 60),
+    enabled:        merged.enabled !== false,
+    updatedAt:      new Date().toISOString(),
+  };
+  await saveSourceSettings({ customSources: list });
+  return list[idx];
+}
+
+export async function deleteCustomSource(id) {
+  const cur = await loadSourceSettings();
+  const list = (cur.customSources || []).filter(x => x.id !== id);
+  await saveSourceSettings({ customSources: list });
+  return true;
+}
+
+// ── 백업 / 복원 — Render 무료 플랜 디스크 휘발 대비 ──
+/**
+ * @param {boolean} includeSecrets — true 면 naverClientSecret 평문 포함 (사용자 명시 동의 필요)
+ */
+export async function exportSourceSettingsBackup({ includeSecrets = false } = {}) {
+  const s = await loadSourceSettings();
+  const safe = {
+    version:               1,
+    exportedAt:            new Date().toISOString(),
+    naverEnabled:          !!s.naverEnabled,
+    naverClientId:         s.naverClientId || '',
+    naverClientSecret:     includeSecrets ? (s.naverClientSecret || '') : '',
+    secretsIncluded:       !!includeSecrets,
+    officialAgencyEnabled: s.officialAgencyEnabled !== false,
+    officialAgencyDomains: s.officialAgencyDomains || [],
+    customSources:         s.customSources || [],
+    expandKeywords:        s.expandKeywords !== false,
+    autoTracking:          s.autoTracking || DEFAULT_SOURCE_SETTINGS.autoTracking,
+  };
+  return safe;
+}
+
+/**
+ * 백업 파일을 받아 sourceSettings 에 적용한다.
+ * - 비어있는 secret 은 기존 값을 보존 (덮어쓰기 방지)
+ */
+export async function importSourceSettingsBackup(backup) {
+  if (!backup || typeof backup !== 'object') throw new Error('백업 파일 형식이 올바르지 않습니다.');
+  const patch = {};
+  if ('naverEnabled'  in backup) patch.naverEnabled  = !!backup.naverEnabled;
+  if ('naverClientId' in backup) patch.naverClientId = String(backup.naverClientId || '');
+  if (backup.naverClientSecret) patch.naverClientSecret = String(backup.naverClientSecret); // 비어있으면 saveSourceSettings 에서 보존
+  if ('officialAgencyEnabled'  in backup) patch.officialAgencyEnabled  = !!backup.officialAgencyEnabled;
+  if (Array.isArray(backup.officialAgencyDomains))   patch.officialAgencyDomains  = backup.officialAgencyDomains;
+  if (Array.isArray(backup.customSources))           patch.customSources          = backup.customSources;
+  if ('expandKeywords' in backup) patch.expandKeywords = !!backup.expandKeywords;
+  if (backup.autoTracking) patch.autoTracking = backup.autoTracking;
+  return await saveSourceSettings(patch);
 }
 
 /** API 응답용 — 비밀번호 / API key 는 절대 반환하지 않고 boolean 으로만 노출. */
