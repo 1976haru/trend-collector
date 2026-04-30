@@ -160,6 +160,11 @@ export function defaultPrintSettings(report) {
     imageMode:    'lead',             // 'none' | 'lead' | 'all'
     showSourceLink: true,
     includeAnalysisAppendix: base.includeAnalysisAppendix,
-    printOptimized: true,             // 흑백 인쇄 최적화
+    printOptimized: true,             // 흑백 인쇄 최적화 (deprecated — colorMode 우선)
+    // 출력 색상 모드:
+    //   'bw'            — 흑백 편철 (표지·목차·본문·이미지 모두 흑백, 공공기관 인쇄용)
+    //   'color-images'  — 표지·목차·본문은 흑백 유지, 기사 이미지만 컬러 (원문 확인용)
+    //   'full-color'    — 이미지 + 감정/중요도 배지 컬러 (디지털 열람용)
+    colorMode: 'bw',
   };
 }

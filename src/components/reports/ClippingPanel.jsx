@@ -33,6 +33,12 @@ const IMG_OPTIONS = [
   { v: 'all',  l: '본문 이미지 포함' },
 ];
 
+const COLOR_OPTIONS = [
+  { v: 'bw',           l: '흑백 편철', desc: '실제 인쇄 편철용입니다. 표지 / 목차 / 본문 / 이미지 모두 흑백.' },
+  { v: 'color-images', l: '컬러 이미지', desc: '표지와 본문은 흑백으로 유지하고 기사 사진만 컬러로 표시합니다.' },
+  { v: 'full-color',   l: '전체 컬러', desc: '이미지 + 분석 배지까지 컬러로 표시합니다. 디지털 열람용.' },
+];
+
 const ISSUE_OPTIONS = ['조간', '석간', '수시', '주간', '월간'];
 
 export default function ClippingPanel({ reportId }) {
@@ -193,6 +199,17 @@ export default function ClippingPanel({ reportId }) {
           </div>
         </div>
 
+        {/* 출력 색상 모드 */}
+        <div style={S.row}>
+          <label style={S.lbl}>출력 색상</label>
+          <select style={S.input} value={settings.colorMode || 'bw'} onChange={e => update({ colorMode: e.target.value })}>
+            {COLOR_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+          </select>
+          <div style={S.colorHint}>
+            {(COLOR_OPTIONS.find(o => o.v === (settings.colorMode || 'bw')) || COLOR_OPTIONS[0]).desc}
+          </div>
+        </div>
+
         <div style={S.checks}>
           <label style={S.chk}>
             <input type="checkbox" checked={settings.showSourceLink !== false} onChange={e => update({ showSourceLink: e.target.checked })} />
@@ -231,7 +248,12 @@ export default function ClippingPanel({ reportId }) {
 
       {/* ── 2) 편철형 출력물 ──────────────────── */}
       <div style={S.panel}>
-        <div style={S.head}>📰 편철형 출력물</div>
+        <div style={S.head}>
+          📰 편철형 출력물
+          <span style={S.colorBadge} title="출력 색상 — 편철 설정에서 변경 가능">
+            {(COLOR_OPTIONS.find(o => o.v === (settings.colorMode || 'bw')) || COLOR_OPTIONS[0]).l}
+          </span>
+        </div>
         <div style={S.note}>
           기사 원문을 언론사별로 묶어 인쇄하는 용도입니다. 표지 → 언론사별 목차 → 기사 본문 순서로 구성됩니다.
         </div>
@@ -303,7 +325,8 @@ function labelOfQuality(k) {
 const S = {
   wrap:    { display: 'flex', flexDirection: 'column', gap: 11 },
   panel:   { background: 'white', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
-  head:    { fontSize: 13, fontWeight: 800, marginBottom: 8, color: '#0d1117' },
+  head:    { fontSize: 13, fontWeight: 800, marginBottom: 8, color: '#0d1117', display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' },
+  colorBadge:{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#f0ede8', color: '#444' },
   note:    { fontSize: 12, color: '#666', marginBottom: 10, lineHeight: 1.5 },
   loading: { padding: 20, textAlign: 'center', color: '#666' },
 
@@ -334,4 +357,5 @@ const S = {
   ok:      { background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, whiteSpace: 'pre-wrap' },
   err:     { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, whiteSpace: 'pre-wrap' },
   hint:    { marginTop: 8, padding: '7px 10px', fontSize: 12, color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, lineHeight: 1.55 },
+  colorHint:{ fontSize: 11.5, color: '#666', marginTop: 4, lineHeight: 1.5 },
 };

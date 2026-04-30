@@ -879,7 +879,8 @@ api.put('/reports/:id/print-settings', async (req, res) => {
   try {
     const allowed = ['presetId', 'title', 'dateText', 'issueLabel', 'mainBoxTitle', 'mainBoxSub',
       'extraTag1', 'extraTag2', 'organization', 'sortBy', 'pageLayout', 'columnCount', 'imageMode',
-      'showSourceLink', 'includeAnalysisAppendix', 'printOptimized'];
+      'showSourceLink', 'includeAnalysisAppendix', 'printOptimized',
+      'colorMode', 'analysisColorMode'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     // 프리셋 적용 옵션

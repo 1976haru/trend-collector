@@ -202,7 +202,14 @@ export function renderAnalysisHtml(report, opts = {}) {
   .a-mute { color:#666; font-size: 9.5pt; }
   .a-bullet li { list-style: none; position: relative; padding-left: 12pt; }
   .a-bullet li::before { content:"○"; position: absolute; left: 0; color: #0d1117; font-size: 9pt; }
-</style></head><body>
+
+  /* 분석형 색상 모드 — 기본 color (그래프/배지 색상 사용), bw 시 흑백 인쇄용 */
+  body.analysis-bw, body.analysis-bw * { color: #000 !important; }
+  body.analysis-bw img { filter: grayscale(100%) contrast(1.05); }
+  body.analysis-bw table th { background: #f0f0f0 !important; }
+  /* PDF 색상 강제 — Chromium 인쇄 시 색상 보존 */
+  @media print { * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style></head><body class="analysis-${(opts.analysisColorMode || report.printSettings?.analysisColorMode) === 'bw' ? 'bw' : 'color'}">
 <div id="report-pdf-root">
   <section class="a-cover">
     <div class="cls">${esc(meta.classification || '내부 검토용')}</div>

@@ -404,13 +404,38 @@ export function renderClippingHtml(report, opts = {}) {
   .cl-art-lead { margin: 4pt 0 6pt; }
   .cl-art-lead img {
     width: 100%; max-height: 80mm; object-fit: cover;
-    filter: grayscale(100%) contrast(1.05);
     border: .4pt solid #888;
   }
   .cl-art-lead figcaption { font-size: 9pt; color: #444; margin-top: 2pt; }
   .cl-art-body { font-size: 10.5pt; line-height: 1.85; text-align: justify; word-break: keep-all; }
   .cl-art-body p { margin: 4pt 0 6pt; text-indent: 8pt; }
-  .cl-art-body img { max-width: 100%; filter: grayscale(100%); }
+  .cl-art-body img { max-width: 100%; }
+
+  /* ── 출력 색상 모드 ─────────────────────
+   * body class 로 분기:
+   *   .clipping-bw            — 모든 이미지 흑백 (기본, 공공기관 인쇄)
+   *   .clipping-color-images  — 표지/목차는 흑백 유지, 이미지만 컬러
+   *   .clipping-full-color    — 이미지 + 분석 배지 모두 컬러
+   */
+  body.clipping-bw .cl-art-lead img,
+  body.clipping-bw .cl-art-body img,
+  body.clipping-bw .cl-cover img {
+    filter: grayscale(100%) contrast(1.05);
+  }
+  body.clipping-color-images .cl-art-lead img,
+  body.clipping-color-images .cl-art-body img,
+  body.clipping-full-color .cl-art-lead img,
+  body.clipping-full-color .cl-art-body img {
+    filter: none;
+  }
+  /* full-color 모드 — 분석 부록의 감정/중요도 배지 색상 표시 */
+  body.clipping-full-color .cl-appendix .cl-h3   { color: #1d4ed8; }
+  body.clipping-full-color .cl-mute              { color: #6b7280; }
+
+  /* PDF 색상 강제 — Chromium 이 인쇄 시 색상 보존하도록 */
+  @media print {
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
   .cl-art-body .cl-missing { color: #555; font-style: italic; }
   .cl-art-byline { text-align: right; font-size: 9.5pt; color: #444; margin-top: 4pt; }
   .cl-art-link { font-size: 8.5pt; color: #555; margin-top: 4pt; word-break: break-all; }
@@ -426,7 +451,7 @@ export function renderClippingHtml(report, opts = {}) {
   @media print {
     body { font-size: 10.5pt; }
   }
-</style></head><body>
+</style></head><body class="clipping-${['bw', 'color-images', 'full-color'].includes(settings.colorMode) ? settings.colorMode : 'bw'}">
 <div id="report-pdf-root">
   ${cover}
   ${toc}
