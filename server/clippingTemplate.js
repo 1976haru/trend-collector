@@ -249,8 +249,15 @@ export function buildQualityReport(report) {
 }
 
 // ── 메인 — 편철형 HTML ─────────────────────────
+// opts.fast === true → 외부 폰트 link 제거 (Render 콜드 스타트 timeout 방지)
+//                      + settings.imageMode 강제 'lead' (이미지 부담 최소화)
+//                      + 분석 부록 자동 비활성 (필요 시 명시적 ON)
 export function renderClippingHtml(report, opts = {}) {
   const settings = { ...defaultPrintSettings(report), ...(report.printSettings || {}), ...(opts.settings || {}) };
+  if (opts.fast) {
+    settings.imageMode = settings.imageMode === 'none' ? 'none' : 'lead';
+    if (opts.includeAppendix === undefined) opts = { ...opts, includeAppendix: false };
+  }
   const list     = buildPrintList(report, settings);
   const groups   = groupByMedia(list);
 
@@ -287,17 +294,23 @@ export function renderClippingHtml(report, opts = {}) {
     ? renderAnalysisAppendix(report)
     : '';
 
+  // fast 모드 — 외부 Google Fonts 의존을 제거 (Render 콜드 스타트 / 네트워크 지연 시 timeout 방지).
+  // 시스템 한글 명조 fallback 으로 충분히 보고서 품질이 유지된다.
+  const fontLink = opts.fast
+    ? ''
+    : `<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;700&family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet" />`;
+
   return /* html */ `<!doctype html>
 <html lang="ko"><head>
 <meta charset="utf-8" />
 <title>${esc(settings.title)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;700&family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet" />
+${fontLink}
 <style>
   @page { size: A4 portrait; margin: 25mm 22mm; }
   * { box-sizing: border-box; }
   html, body { background: white; }
   body {
-    font-family: 'Nanum Myeongjo','Noto Serif KR','Batang','Malgun Gothic',serif;
+    font-family: 'Nanum Myeongjo','Noto Serif KR','Batang','Malgun Gothic','Apple SD Gothic Neo',serif;
     color: #000;
     line-height: 1.7;
     font-size: 10.5pt;

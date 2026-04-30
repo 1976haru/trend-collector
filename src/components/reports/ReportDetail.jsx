@@ -466,11 +466,14 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
       setPdfBusy('');
     }
   }
-  async function onDownload() {
+  async function onDownload(opts = {}) {
     setPdfBusy('download'); setPdfError(''); setPdfOk(''); setPdfFallback(false);
     try {
-      const r = await downloadReportPdf(report.id);
-      setPdfOk(`💾 PDF 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)`);
+      const r = await downloadReportPdf(report.id, opts);
+      const note = r.mode === 'auto-fast'
+        ? ' · 자동 빠른 PDF (Word/HTML 로 전체 원문 받기 권장)'
+        : r.mode === 'fast' ? ' · 빠른 PDF' : '';
+      setPdfOk(`💾 PDF 다운로드 완료 — ${r.filename} (${(r.size/1024).toFixed(0)} KB)${note}`);
     } catch (e) {
       setBusyError(e.message || String(e), true);
     } finally {
@@ -561,8 +564,11 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
           <button onClick={onPreview} disabled={!!pdfBusy} style={S.linkBtn}>
             {pdfBusy === 'preview' ? '⏳' : '🔍 통합 PDF 미리보기'}
           </button>
-          <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn}>
-            {pdfBusy === 'download' ? '⏳' : '📄 통합 PDF'}
+          <button onClick={() => onDownload({ fast: true })} disabled={!!pdfBusy} style={S.pdfBtn} title="외부 폰트/이미지 제외 — timeout 위험이 가장 낮습니다">
+            {pdfBusy === 'download' ? '⏳' : '⚡ 빠른 통합 PDF'}
+          </button>
+          <button onClick={() => onDownload({ fast: false })} disabled={!!pdfBusy} style={S.pdfBtn} title="원문 이미지 포함. 시간이 오래 걸릴 수 있습니다.">
+            {pdfBusy === 'download' ? '⏳' : '🖼 이미지 포함 PDF'}
           </button>
           <button onClick={onDownloadWord} disabled={!!pdfBusy} style={S.wordBtn}>
             {pdfBusy === 'word' ? '⏳' : '📝 통합 Word'}

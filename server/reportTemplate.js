@@ -195,7 +195,7 @@ function renderArticleCard(a, i, includeImages = true) {
 }
 
 // ── 메인 보고서 HTML ───────────────────────────
-export function renderReportHtml(report) {
+export function renderReportHtml(report, opts = {}) {
   const {
     id, title = '법무부 언론보도 모니터링 일일보고',
     keywords = [], excludes = [], articles = [], generatedAt,
@@ -243,11 +243,16 @@ export function renderReportHtml(report) {
     ? `<span class="riskCaution">⚠️ 주의</span>`
     : `<span class="riskOk">✅ 안정</span>`;
 
+  // fast 모드 — 외부 폰트 제거 (PDF timeout 방어)
+  const fontLink = opts.fast
+    ? ''
+    : `<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet" />`;
+
   return /* html */ `<!doctype html>
 <html lang="ko"><head>
 <meta charset="utf-8" />
 <title>${esc(title)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet" />
+${fontLink}
 <style>
   @page { size: A4; margin: 18mm 14mm; }
   * { box-sizing: border-box; }

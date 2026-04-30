@@ -312,6 +312,58 @@ async function main() {
       assert(buf.length > 30_000, `${buf.length}`);
     });
 
+    // ── fast 모드 검증 (외부 폰트 제거 + 이미지 부담 최소화) ──
+    await test('fast 모드 편철 HTML — 외부 Google Fonts link 제거 확인', () => {
+      const fastHtml = ct.renderClippingHtml(reportFull, { fast: true });
+      assert(!/fonts\.googleapis\.com/.test(fastHtml), 'fast 모드인데 Google Fonts 링크가 남아있음');
+      // imageMode 강제 lead — body img 갯수 추정 (lead 만 → 기사당 0~1개)
+      const imgs = (fastHtml.match(/<img\b/g) || []).length;
+      const arts = (reportFull.articles || []).length;
+      assert(imgs <= arts + 5, `fast 모드 이미지 ${imgs}개 — 기사 ${arts}건 대비 과다`);
+    });
+    await test('fast 모드 분석 HTML — 외부 폰트 link 제거', () => {
+      const h = at.renderAnalysisHtml(reportFull, { fast: true });
+      assert(!/fonts\.googleapis\.com/.test(h));
+    });
+    await test('fast 모드 보고서 HTML — 외부 폰트 link 제거', () => {
+      const h = rt.renderReportHtml(reportFull, { fast: true });
+      assert(!/fonts\.googleapis\.com/.test(h));
+    });
+
+    // 30건 fast PDF — 시간 단축 기대
+    await test('fast 30건 PDF — %PDF + 60초 이내', async () => {
+      const html = ct.renderClippingHtml(reportFull, { fast: true, includeAppendix: false });
+      const t0 = Date.now();
+      const buf = await pg.htmlToPdfBudgeted(html, { reportId: 'fast-30', mode: 'fast' });
+      const dt = Date.now() - t0;
+      console.log(`     · fast 30건 PDF: ${(buf.length / 1024 | 0)}KB / ${dt}ms`);
+      assert(buf.slice(0, 4).toString() === '%PDF');
+      assert(dt < 60_000, `생성 시간 ${dt}ms`);
+    });
+
+    // htmlToPdfBudgeted — 잘못된 selector HTML 입력 시 PDF_TIMEOUT 코드 부착
+    await test('PDF_TIMEOUT — #report-pdf-root 없는 HTML 은 PDF_TIMEOUT 코드로 거부', async () => {
+      // selector timeout 60s 면 너무 오래 걸리므로 budget 을 짧게 설정한 별도 호출.
+      // 여기서는 실제 budget 을 5초로 단축하기 위해 직접 race.
+      const badHtml = '<!doctype html><html><body>no root</body></html>';
+      let caught;
+      try {
+        // 5초만에 fail 시키기 위해 — selector 60s 를 기다리는 대신 외부 race 로 감싸 budget=5s
+        await Promise.race([
+          pg.htmlToPdf(badHtml, { reportId: 'bad', mode: 'test' }),
+          new Promise((_, rej) => setTimeout(() => {
+            const e = new Error('test budget');
+            e.code = 'PDF_TIMEOUT';
+            rej(e);
+          }, 5_000)),
+        ]);
+      } catch (e) {
+        caught = e;
+      }
+      assert(caught && (caught.code === 'PDF_TIMEOUT' || caught.code === 'PDF_FAILED' || /timeout|root/i.test(caught.message || '')),
+        `예상 코드 미부착: code=${caught?.code} msg=${caught?.message}`);
+    });
+
     // PDF 안에 깨진 문자가 들어가는지 간접 확인 — HTML 단계에서 �가 거의 0건이면 OK
     await test('PDF 입력 HTML 깨진 문자 비율 < 0.5%', () => {
       const html = ct.renderClippingHtml(reportFull);

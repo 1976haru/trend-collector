@@ -55,15 +55,33 @@ export function reportHtmlDebugUrl(id)   { return `/api/reports/${encodeURICompo
 export function reportPdfUrl(id) { return reportPdfDownloadUrl(id); }
 
 // ── PDF fetch+blob 으로 안정적으로 받기 ─────────
+// 서버는 PDF 실패 시 X-PDF-Error-Code 헤더 + Accept: application/json 시 JSON 본문을 반환한다.
+// 여기서는 JSON 을 우선 요청하여 friendly 한국어 메시지를 그대로 사용자에게 표시한다.
 async function fetchPdfBlob(url) {
-  const res = await fetch(url, { credentials: 'include' });
+  const res = await fetch(url, {
+    credentials: 'include',
+    headers: { 'Accept': 'application/pdf, application/json' },
+  });
   if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.text()).slice(0, 300); } catch {}
+    const code = res.headers.get('x-pdf-error-code') || '';
+    let payload = null, detail = '';
+    try {
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('application/json')) payload = await res.json();
+      else                                  detail = (await res.text()).slice(0, 400);
+    } catch {}
     if (res.status === 401) {
       throw Object.assign(new Error('인증이 만료되었습니다. 다시 로그인하세요.'), { status: 401 });
     }
-    throw Object.assign(new Error(`PDF 생성 실패 (HTTP ${res.status}). ${detail}`), { status: res.status });
+    const msg = payload?.message
+              || (code === 'PDF_TIMEOUT' ? 'PDF 생성 시간이 초과되었습니다. 빠른 PDF / Word / HTML 로 대신 받아주세요.' : null)
+              || (code === 'CHROME_NOT_FOUND' ? 'PDF 엔진(Chrome) 이 서버에 설치되지 않았습니다.' : null)
+              || `PDF 생성 실패 (HTTP ${res.status}). ${detail}`;
+    throw Object.assign(new Error(msg), {
+      status: res.status,
+      code: payload?.code || code || 'PDF_FAILED',
+      fallback: payload?.fallback || ['fast-pdf', 'word', 'html', 'excel'],
+    });
   }
   const ct = (res.headers.get('content-type') || '').toLowerCase();
   if (!ct.includes('application/pdf')) {
@@ -79,17 +97,19 @@ async function fetchPdfBlob(url) {
   const cd = res.headers.get('content-disposition') || '';
   const m  = cd.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i);
   const filename = m ? decodeURIComponent(m[1] || m[2] || '') : 'trend-report.pdf';
-  return { blob, filename };
+  const mode = res.headers.get('x-pdf-mode') || '';   // '' | 'fast' | 'auto-fast'
+  return { blob, filename, mode };
 }
 
-export async function downloadReportPdf(id) {
-  const { blob, filename } = await fetchPdfBlob(reportPdfDownloadUrl(id));
+export async function downloadReportPdf(id, opts = {}) {
+  const q = opts.fast === true ? '?fast=1' : opts.fast === false ? '?fast=0' : '';
+  const { blob, filename, mode } = await fetchPdfBlob(reportPdfDownloadUrl(id) + q);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  return { filename, size: blob.size };
+  return { filename, size: blob.size, mode };
 }
 
 export async function previewReportPdf(id) {
@@ -221,11 +241,18 @@ export const analysisExcelUrl   = (id)         => `/api/reports/${encodeURICompo
 export const analysisHtmlUrl    = (id)         => `/api/reports/${encodeURIComponent(id)}/analysis/html`;
 
 // ── 편철형 다운로드 ──────────────────────────
+// opts.fast === true → 빠른 PDF (외부 폰트 / 본문 이미지 제외)
+// opts.fast === false → 강제 원문 PDF (자동 fallback 비활성)
+// 기본 (auto)            → 서버가 기사 30+/이미지 20+/HTML 5MB+ 시 자동으로 fast 모드 적용
 export async function downloadClippingPdf(id, opts = {}) {
-  const q = opts.includeAppendix === false ? '?appendix=0' : '';
-  const { blob, filename } = await fetchPdfBlob(clippingPdfUrl(id, q));
+  const params = [];
+  if (opts.includeAppendix === false) params.push('appendix=0');
+  if (opts.fast === true)  params.push('fast=1');
+  if (opts.fast === false) params.push('fast=0');
+  const q = params.length ? '?' + params.join('&') : '';
+  const { blob, filename, mode } = await fetchPdfBlob(clippingPdfUrl(id, q));
   await triggerDownload(blob, filename);
-  return { filename, size: blob.size };
+  return { filename, size: blob.size, mode };
 }
 export async function previewClippingPdf(id) {
   const w = window.open(clippingPreviewUrl(id), '_blank');

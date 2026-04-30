@@ -1,12 +1,27 @@
 // ─────────────────────────────────────────────
 // pdfGenerator.js — Puppeteer 로 HTML → PDF
-// 한글 폰트는 Google Fonts (Noto Sans KR) 를 임베드한다.
-// preview / download 모두 동일한 buffer 를 반환 — 헤더만 라우터에서 분기.
+//
+// 핵심 정책
+//   1) 외부 네트워크에 의존하지 않는다.
+//      - 템플릿은 fast 모드에서 외부 폰트 link 를 제거한다 (server/clippingTemplate.js 등).
+//      - waitUntil 은 networkidle0 대신 'domcontentloaded' + 명시 selector 대기.
+//   2) 모든 단계에 명시적 timeout — 어느 한 단계도 무한 대기 금지.
+//      - navigation 180s · selector 60s · fonts 10s · images race 10s · pdf 90s
+//   3) 단계별 timing log — 실패 시 어느 단계에서 막혔는지 즉시 식별.
+//   4) 친절한 한국어 오류 — code('CHROME_NOT_FOUND' / 'PDF_TIMEOUT') 부착.
+//   5) page 는 항상 finally 에서 close — leak 방지.
 // ─────────────────────────────────────────────
 
 import puppeteer from 'puppeteer';
 
 let browserPromise;
+
+const NAV_TIMEOUT_MS      = 180_000;  // page.setContent / goto
+const SELECTOR_TIMEOUT_MS = 60_000;   // #report-pdf-root 대기
+const FONTS_TIMEOUT_MS    = 10_000;   // document.fonts.ready 최대 대기
+const IMAGES_TIMEOUT_MS   = 10_000;   // 이미지 로딩 race 한도
+const PDF_TIMEOUT_MS      = 90_000;   // page.pdf() 자체 timeout
+const TOTAL_BUDGET_MS     = 180_000;  // 전체 예산 (외부 race 가드)
 
 export function ensureBrowser() {
   if (browserPromise) return browserPromise;
@@ -19,16 +34,16 @@ export function ensureBrowser() {
       '--disable-dev-shm-usage',
       '--disable-gpu',
       '--font-render-hinting=medium',
+      // 외부 리소스 로딩 차단을 우회하기 위한 안정성 플래그
+      '--disable-features=IsolateOrigins,site-per-process',
     ],
   };
-  // 명시적 Chrome 경로가 있으면 사용 (Render 등 캐시 문제 회피)
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
   }
 
   browserPromise = puppeteer.launch(launchOpts).catch(err => {
     browserPromise = null;
-    // 'Could not find Chrome' / 'Chromium' 오류를 사용자 친화적으로 변환
     const msg = err?.message || String(err);
     if (/Could not find (Chrome|Chromium|browser)|Browser was not found/i.test(msg)) {
       const friendly = new Error(
@@ -51,83 +66,161 @@ export async function shutdownBrowser() {
   browserPromise = null;
 }
 
+// 외부 race — 어떤 한 단계에서 무한 대기해도 전체 예산을 넘지 않도록.
+function withTotalBudget(promise, budgetMs, stepName) {
+  let to;
+  const guard = new Promise((_, reject) => {
+    to = setTimeout(() => {
+      const e = new Error(`PDF 생성 전체 시간(${(budgetMs / 1000) | 0}초) 초과 — 단계: ${stepName}`);
+      e.code = 'PDF_TIMEOUT';
+      e.step = stepName;
+      reject(e);
+    }, budgetMs);
+  });
+  return Promise.race([
+    promise.finally(() => clearTimeout(to)),
+    guard,
+  ]);
+}
+
 /**
  * HTML → PDF 버퍼.
- * - waitForSelector('#report-pdf-root') 으로 렌더링 완료 보장
- * - 폰트 / 이미지 모두 로드까지 대기 (networkidle0)
- * - Buffer 가 %PDF 로 시작하는지 확인 후 반환 (그 외에는 throw)
+ * @param {string} html
+ * @param {Object} opts
+ *   - format / margin: page.pdf 옵션
+ *   - reportId: 로그용
+ *   - mode: 'fast' | 'image' | 'default' — 로그에만 사용 (HTML 생성은 호출자 책임)
+ *   - waitNetworkIdle: false (기본). true 일 때만 networkidle2 대기.
  */
 export async function htmlToPdf(html, opts = {}) {
+  const startAt    = Date.now();
+  const reportId   = opts.reportId || '-';
+  const mode       = opts.mode || 'default';
+  const tag        = `[pdf:${reportId}:${mode}]`;
+  const log        = (step, extra) => console.log(`${tag} ${step}${extra ? ' ' + extra : ''}  +${Date.now() - startAt}ms`);
+
   const browser = await ensureBrowser();
   const page    = await browser.newPage();
 
-  // 콘솔 / 페이지 오류는 서버 로그로 — 디버깅용
+  page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+  page.setDefaultTimeout(NAV_TIMEOUT_MS);
+
   page.on('console', m => {
-    if (m.type() === 'error') console.error('[pdf:page-console]', m.text());
+    if (m.type() === 'error') console.error(`${tag} page-console`, m.text());
   });
-  page.on('pageerror', e => console.error('[pdf:page-error]', e.message));
+  page.on('pageerror', e => console.error(`${tag} page-error`, e.message));
+  page.on('requestfailed', req => {
+    // 외부 폰트/이미지 실패는 전체 PDF 실패로 이어지면 안 된다 — 로그만.
+    const u = req.url();
+    if (!/^data:|^about:/.test(u)) console.warn(`${tag} request-failed ${req.failure()?.errorText} ${u.slice(0, 120)}`);
+  });
 
+  let lastStep = 'init';
   try {
-    await page.emulateMediaType('screen');
-    // setContent 자체가 networkidle 까지 대기
-    await page.setContent(html, {
-      waitUntil: ['load', 'networkidle0'],
-      timeout:   60_000,
-    });
-    // 보고서 루트 셀렉터가 실제로 렌더링 됐는지 확인
-    try {
-      await page.waitForSelector('#report-pdf-root', { timeout: 15_000 });
-    } catch (e) {
-      throw new Error('보고서 루트(#report-pdf-root)가 렌더링되지 않았습니다.');
-    }
-    // 웹폰트 로딩 대기
-    try { await page.evaluate(() => document.fonts ? document.fonts.ready : null); } catch {}
-    // 이미지 onload 대기 (timeout 으로 PDF 전체 실패 방지)
-    // PDF 의 이미지는 대부분 data: URL 로 임베드되므로 빠르게 complete 됨.
-    try {
-      await page.evaluate(() => Promise.race([
-        Promise.all(
-          Array.from(document.images)
-            .filter(img => !img.complete)
-            .map(img => new Promise(res => {
-              img.addEventListener('load',  () => res(true),  { once: true });
-              img.addEventListener('error', () => res(false), { once: true });
-            }))
-        ),
-        new Promise(res => setTimeout(res, 12000)),
-      ]));
-      // 모든 이미지가 정말 그려졌는지 (naturalWidth > 0) 한 번 더 확인 — data URL 깨짐 방어
-      try {
-        await page.waitForFunction(() =>
-          Array.from(document.images).every(img => img.complete && (img.naturalWidth > 0 || img.src === '')),
-          { timeout: 5000 }
-        );
-      } catch {}
-    } catch {}
+    log('start', `htmlSize=${(html.length / 1024 | 0)}KB`);
 
-    const pdf = await page.pdf({
+    // ── 1) HTML 주입 — domcontentloaded 만 대기 (외부 resource 안 기다림) ──
+    lastStep = 'setContent';
+    await page.emulateMediaType('screen');
+    if (opts.waitNetworkIdle) {
+      await page.setContent(html, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
+    } else {
+      await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+    }
+    log('htmlReady');
+
+    // ── 2) 셀렉터 대기 — 보고서 루트가 실제로 렌더링 됐는지 ──
+    lastStep = 'waitForSelector';
+    try {
+      await page.waitForSelector('#report-pdf-root', { timeout: SELECTOR_TIMEOUT_MS });
+    } catch {
+      const e = new Error('보고서 루트(#report-pdf-root)가 렌더링되지 않았습니다.');
+      e.code = 'PDF_TIMEOUT';
+      e.step = 'waitForSelector';
+      throw e;
+    }
+    log('selectorReady');
+
+    // ── 3) 폰트 로딩 — 최대 10초 ──
+    lastStep = 'fontsReady';
+    await page.evaluate(async (timeoutMs) => {
+      if (!document.fonts) return;
+      await Promise.race([
+        document.fonts.ready,
+        new Promise(res => setTimeout(res, timeoutMs)),
+      ]);
+    }, FONTS_TIMEOUT_MS).catch(() => {});
+    log('fontReady');
+
+    // ── 4) 이미지 로딩 — 최대 10초 race, 실패는 graceful ──
+    lastStep = 'imagesReady';
+    await page.evaluate(async (timeoutMs) => {
+      const imgs = Array.from(document.images || []);
+      const each = imgs.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; resolve(); } };
+          img.addEventListener('load',  finish, { once: true });
+          img.addEventListener('error', finish, { once: true });
+          // 개별 이미지도 3초 한도
+          setTimeout(finish, 3000);
+        });
+      });
+      await Promise.race([
+        Promise.all(each),
+        new Promise(resolve => setTimeout(resolve, timeoutMs)),
+      ]);
+      // 로딩 실패한 외부 이미지는 PDF 에서 숨겨 빈 박스로 남지 않게 한다.
+      // (data:URL 이미지는 거의 항상 complete 상태)
+      for (const img of imgs) {
+        const ok = img.complete && img.naturalWidth > 0;
+        if (!ok) img.style.display = 'none';
+      }
+    }, IMAGES_TIMEOUT_MS).catch(() => {});
+    log('imagesReady');
+
+    // ── 5) PDF 생성 ──
+    lastStep = 'pdf';
+    const pdfPromise = page.pdf({
       format:           opts.format || 'A4',
       printBackground:  true,
       preferCSSPageSize: true,
       margin: opts.margin || { top: '18mm', right: '14mm', bottom: '18mm', left: '14mm' },
-      displayHeaderFooter: true,
-      headerTemplate: `<div style="font-size:9pt; width:100%; padding:0 16mm; color:#888;">
-                         <span>법무부 언론보도 모니터링 일일보고</span>
-                       </div>`,
-      footerTemplate: `<div style="font-size:9pt; width:100%; padding:0 16mm; color:#888; text-align:center;">
-                         <span class="pageNumber"></span> / <span class="totalPages"></span>
-                       </div>`,
-      timeout: 90_000,
+      displayHeaderFooter: opts.displayHeaderFooter !== false,
+      headerTemplate: opts.headerTemplate || `<div style="font-size:9pt; width:100%; padding:0 16mm; color:#888;"><span>법무부 언론보도 모니터링 일일보고</span></div>`,
+      footerTemplate: opts.footerTemplate || `<div style="font-size:9pt; width:100%; padding:0 16mm; color:#888; text-align:center;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>`,
+      timeout: PDF_TIMEOUT_MS,
     });
+    const pdf = await pdfPromise;
+    log('pdfGenerated', `${(pdf.length / 1024 | 0)}KB`);
 
-    // 매직 바이트 검증 — PDF 가 아니면 throw
+    // 매직 바이트 검증
     const buf = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf);
     const head = buf.slice(0, 4).toString('binary');
     if (head !== '%PDF') {
-      throw new Error(`PDF 시그니처 오류 — 응답 헤드: ${JSON.stringify(head)} (예상: %PDF)`);
+      const e = new Error(`PDF 시그니처 오류 — 응답 헤드: ${JSON.stringify(head)} (예상: %PDF)`);
+      e.code = 'PDF_SIGNATURE';
+      throw e;
     }
     return buf;
+  } catch (e) {
+    // step 정보 부착 + timeout 원인을 PDF_TIMEOUT 코드로 표준화
+    if (!e.code) {
+      const m = String(e.message || '');
+      if (/timeout/i.test(m) || /Navigation timeout/i.test(m)) {
+        e.code = 'PDF_TIMEOUT';
+      }
+    }
+    if (!e.step) e.step = lastStep;
+    console.error(`${tag} FAIL step=${e.step} code=${e.code || 'UNKNOWN'} +${Date.now() - startAt}ms — ${e.message}`);
+    throw e;
   } finally {
     try { await page.close(); } catch {}
   }
+}
+
+// 전체 예산 race 를 적용한 wrapper — 라우트에서 사용 권장.
+export async function htmlToPdfBudgeted(html, opts = {}) {
+  return withTotalBudget(htmlToPdf(html, opts), TOTAL_BUDGET_MS, opts.mode || 'pdf');
 }

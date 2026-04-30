@@ -90,8 +90,22 @@ export default function ClippingPanel({ reportId }) {
     setBusy(label); setMsg(''); setErr('');
     try {
       const r = await fn();
-      setMsg(typeof r === 'string' ? r : r?.filename ? `${label} 완료 — ${r.filename}` : `${label} 완료`);
-    } catch (e) { setErr(e.message || String(e)); }
+      const note = r?.mode === 'auto-fast'
+        ? ' · 리포트가 커서 빠른 PDF 모드로 자동 전환되었습니다 (전체 원문은 Word/HTML 로 받아주세요).'
+        : r?.mode === 'fast'
+        ? ' · 빠른 PDF 모드'
+        : '';
+      setMsg(typeof r === 'string' ? r : r?.filename ? `${label} 완료 — ${r.filename}${note}` : `${label} 완료`);
+    } catch (e) {
+      // 서버가 PDF_TIMEOUT / CHROME_NOT_FOUND 코드를 부착해 보낸다 — UI 에 fallback 안내 표시
+      const code = e.code || '';
+      const baseMsg = e.message || String(e);
+      if (code === 'PDF_TIMEOUT' || code === 'CHROME_NOT_FOUND' || /시간이 초과|설치되지 않/.test(baseMsg)) {
+        setErr(`${baseMsg}\n→ 아래 [📝 편철 Word] 또는 [🌐 편철 HTML] 버튼으로 대신 받아주세요. PDF 는 [⚡ 빠른 PDF] 로 다시 시도할 수 있습니다.`);
+      } else {
+        setErr(baseMsg);
+      }
+    }
     finally { setBusy(''); }
   }
 
@@ -225,11 +239,15 @@ export default function ClippingPanel({ reportId }) {
           <a href={clippingPreviewUrl(reportId)} target="_blank" rel="noopener noreferrer" style={S.btnLight}>
             🖥 편철 미리보기 (HTML)
           </a>
-          <a href={clippingPdfUrl(reportId, '?preview=1')} target="_blank" rel="noopener noreferrer" style={S.btnLight}>
+          <a href={clippingPdfUrl(reportId, '?preview=1&fast=1')} target="_blank" rel="noopener noreferrer" style={S.btnLight}>
             🔍 편철 PDF 미리보기
           </a>
-          <button style={S.btnDark}  onClick={() => safeRun('편철 PDF 다운로드', () => downloadClippingPdf(reportId))} disabled={busy === '편철 PDF 다운로드'}>
-            {busy === '편철 PDF 다운로드' ? '⏳' : '📄 편철 PDF'}
+          {/* 기본 버튼은 빠른 PDF — Render 콜드 스타트 / 외부 폰트 timeout 방지 */}
+          <button style={S.btnDark} onClick={() => safeRun('빠른 편철 PDF', () => downloadClippingPdf(reportId, { fast: true }))} disabled={busy === '빠른 편철 PDF'} title="외부 폰트 / 본문 이미지 제외 — 가장 빠르고 timeout 위험이 낮습니다">
+            {busy === '빠른 편철 PDF' ? '⏳' : '⚡ 빠른 편철 PDF'}
+          </button>
+          <button style={S.btnLight} onClick={() => safeRun('이미지 포함 편철 PDF', () => downloadClippingPdf(reportId, { fast: false }))} disabled={busy === '이미지 포함 편철 PDF'} title="원문 이미지 + 본문 포함. 기사가 많으면 시간이 오래 걸릴 수 있습니다.">
+            {busy === '이미지 포함 편철 PDF' ? '⏳' : '🖼 이미지 포함 PDF'}
           </button>
           <button style={S.btnBlue}  onClick={() => safeRun('편철 Word 다운로드', () => downloadClippingWord(reportId))} disabled={busy === '편철 Word 다운로드'}>
             {busy === '편철 Word 다운로드' ? '⏳' : '📝 편철 Word'}
@@ -237,6 +255,10 @@ export default function ClippingPanel({ reportId }) {
           <button style={S.btnLight} onClick={() => safeRun('편철 HTML 다운로드', () => downloadClippingHtml(reportId))} disabled={busy === '편철 HTML 다운로드'}>
             {busy === '편철 HTML 다운로드' ? '⏳' : '🌐 편철 HTML'}
           </button>
+        </div>
+        <div style={S.hint}>
+          ⚡ <strong>빠른 PDF</strong>가 기본입니다 — 외부 폰트와 본문 이미지를 제외해 가장 안정적으로 생성됩니다.{' '}
+          이미지가 필요하면 <strong>🖼 이미지 포함 PDF</strong>를, PDF 가 실패하면 <strong>📝 Word</strong> / <strong>🌐 HTML</strong> 로 받아주세요.
         </div>
       </div>
 
@@ -309,6 +331,7 @@ const S = {
   qRow:    { fontSize: 12.5, color: '#9a3412', padding: '2px 0' },
   qOk:     { fontSize: 12.5, color: '#166534' },
 
-  ok:      { background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: '8px 12px', borderRadius: 8, fontSize: 12.5 },
-  err:     { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030', padding: '8px 12px', borderRadius: 8, fontSize: 12.5 },
+  ok:      { background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, whiteSpace: 'pre-wrap' },
+  err:     { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, whiteSpace: 'pre-wrap' },
+  hint:    { marginTop: 8, padding: '7px 10px', fontSize: 12, color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 7, lineHeight: 1.55 },
 };

@@ -18,7 +18,7 @@ import { renderClippingHtml, buildQualityReport } from './clippingTemplate.js';
 import { renderAnalysisHtml } from './analysisTemplate.js';
 import { PRESET_LIST, getPreset, defaultPrintSettings } from './clippingPresets.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
-import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
+import { htmlToPdf, htmlToPdfBudgeted, shutdownBrowser } from './pdfGenerator.js';
 import { reportToDocx, clippingToDocx, analysisToDocx } from './wordGenerator.js';
 import { reportToXlsx } from './excelGenerator.js';
 import { embedImagesInReport } from './imageCache.js';
@@ -723,12 +723,63 @@ api.get('/reports/:id/quality-check', async (req, res) => {
 app.use('/api', api);
 
 // ──────────────────────────────────────────────
+// PDF 라우트 공용 — fast 모드 / 자동 fallback / 오류 응답
+// ──────────────────────────────────────────────
+
+// 자동으로 fast PDF 모드를 권장할지 — 기사·이미지·HTML 크기 임계값.
+// fast=auto 또는 미지정 시 적용된다.
+function shouldUseFastMode(report, html) {
+  const articleCount = (report?.articles || []).length;
+  const imageCount   = (report?.articles || []).reduce((s, a) => s + ((a.images || []).length || 0), 0);
+  const htmlBytes    = (html || '').length;
+  return articleCount >= 30 || imageCount >= 20 || htmlBytes > 5 * 1024 * 1024;
+}
+
+// PDF 생성 실패 응답 — JSON / HTML 둘 다 지원.
+// 클라이언트가 Accept: application/json 또는 ?format=json 이면 JSON, 아니면 한국어 HTML.
+function sendPdfError(req, res, err, kindLabel = 'PDF 생성') {
+  const code = err.code === 'CHROME_NOT_FOUND' ? 'CHROME_NOT_FOUND'
+             : err.code === 'PDF_TIMEOUT'      ? 'PDF_TIMEOUT'
+             : err.code || 'PDF_FAILED';
+  const status = code === 'CHROME_NOT_FOUND' ? 503
+               : code === 'PDF_TIMEOUT'      ? 504
+               : 500;
+  const message = code === 'PDF_TIMEOUT'
+    ? `${kindLabel} 시간이 초과되었습니다. 빠른 PDF 모드로 다시 시도하거나 Word/HTML 로 받아주세요.`
+    : code === 'CHROME_NOT_FOUND'
+    ? err.message
+    : `${kindLabel} 실패: ${err.message || ''}`;
+  const fallback = ['fast-pdf', 'word', 'html', 'excel'];
+  const wantsJson = req.headers.accept?.includes('application/json') || req.query.format === 'json';
+  if (wantsJson) {
+    return res.status(status).json({ ok: false, code, message, step: err.step || null, fallback });
+  }
+  // HTML 응답에서도 머신 판독용 헤더와 fallback 단서를 함께 노출
+  res.set('X-PDF-Error-Code', code);
+  if (err.step) res.set('X-PDF-Error-Step', err.step);
+  return res.status(status).type('text/html; charset=utf-8').send(
+    `<pre style="font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif; padding:20px; color:#c53030;">⚠️ ${kindLabel} 실패\n\n${(message || '').replace(/</g, '&lt;')}\n\n대체 다운로드: ${fallback.join(' / ')}${err.detail ? `\n\n원본 오류: ${err.detail.replace(/</g, '&lt;')}` : ''}</pre>`
+  );
+}
+
+// fast 옵션 결정 — query string + 크기 자동 fallback.
+//   ?fast=1 → 강제 fast
+//   ?fast=0 → 강제 원문 (자동 fallback 비활성)
+//   미지정/auto → 크기 자동 판단
+function resolveFastMode(query, report, html) {
+  if (query.fast === '1') return { fast: true, auto: false };
+  if (query.fast === '0') return { fast: false, auto: false };
+  if (shouldUseFastMode(report, html)) return { fast: true, auto: true };
+  return { fast: false, auto: false };
+}
+
+// ──────────────────────────────────────────────
 // 편철형 출력물 — HTML / PDF / Word 다운로드 + 미리보기
 // ──────────────────────────────────────────────
-async function buildClippingHtml(id, query = {}) {
+async function buildClippingHtml(id, query = {}, opts = {}) {
   const r = await loadReport(id);
   const includeAppendix = query.appendix === '1' ? true : query.appendix === '0' ? false : undefined;
-  return renderClippingHtml(r, { includeAppendix });
+  return renderClippingHtml(r, { includeAppendix, fast: !!opts.fast });
 }
 
 app.get('/api/reports/:id/clipping/preview', requireAuth, async (req, res) => {
@@ -753,20 +804,31 @@ app.get('/api/reports/:id/clipping/html', requireAuth, async (req, res) => {
 });
 
 app.get('/api/reports/:id/clipping/pdf', requireAuth, async (req, res) => {
+  const reportId = req.params.id;
   try {
-    const html = await buildClippingHtml(req.params.id, req.query);
-    const buf = await htmlToPdf(html);
-    const r = await loadReport(req.params.id);
-    const dateStr = new Date(r.generatedAt).toISOString().slice(0, 10);
-    const fileName = `clipping-${dateStr}.pdf`;
+    // 1) 사이즈 추정용으로 먼저 보고서 / HTML 시안 — fast 자동 판단에 필요.
+    const report = await loadReport(reportId);
+    const previewHtml = renderClippingHtml(report, { includeAppendix: req.query.appendix !== '0', fast: false });
+    const decision = resolveFastMode(req.query, report, previewHtml);
+    if (decision.auto) {
+      console.log(`[clipping:pdf] auto-fast: articles=${(report.articles || []).length}, htmlSize=${(previewHtml.length / 1024 | 0)}KB`);
+    }
+    // 2) 실제 PDF 용 HTML — fast 모드면 외부 폰트 제거 + imageMode='lead'
+    const html = decision.fast
+      ? renderClippingHtml(report, { includeAppendix: false, fast: true })
+      : previewHtml;
+    const buf = await htmlToPdfBudgeted(html, { reportId, mode: decision.fast ? 'fast' : 'default' });
+    const dateStr = new Date(report.generatedAt).toISOString().slice(0, 10);
+    const fileName = `clipping-${dateStr}${decision.fast ? '-fast' : ''}.pdf`;
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `${req.query.preview ? 'inline' : 'attachment'}; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.set('Cache-Control', 'no-store');
+    if (decision.auto) res.set('X-PDF-Mode', 'auto-fast');
+    else if (decision.fast) res.set('X-PDF-Mode', 'fast');
     res.send(buf);
   } catch (e) {
     console.error('[clipping:pdf] error:', e.stack || e.message);
-    const status = e.code === 'CHROME_NOT_FOUND' ? 503 : 500;
-    res.status(status).type('text/html; charset=utf-8').send(`<pre style="font-family:'Noto Sans KR'; padding:20px; color:#c53030;">편철 PDF 생성 실패\n\n${(e.message || '').replace(/</g, '&lt;')}</pre>`);
+    sendPdfError(req, res, e, '편철 PDF 생성');
   }
 });
 
@@ -879,6 +941,7 @@ app.get('/api/reports/:id/html', requireAuth, async (req, res) => {
 });
 
 // ── 공통: 리포트 ID 로 PDF 버퍼 생성 ───────────
+// fast 모드: 외부 폰트 link 제거 + 이미지 임베드 생략 (가장 큰 timeout 원인 차단).
 async function generatePdfFor(id, opts = {}) {
   const orig = await loadReport(id);
   let working = orig;
@@ -890,46 +953,64 @@ async function generatePdfFor(id, opts = {}) {
     working = { ...orig, articles: keep, title: (orig.title || '') + ' (부정 이슈)' };
     suffix = '-negative';
   }
-  // 이미지를 서버에서 다운로드 → data:base64 로 변환해 PDF 에 임베드
-  const includeImages = orig.includeImages !== false;
-  const { report, stats } = await embedImagesInReport(working, { includeImages });
-  console.log(`[pdf] image embed: ${stats.succeeded}/${stats.total} succeeded, ${stats.articlesWithImage}/${stats.articleTotal} articles have image`);
-  const buf     = await htmlToPdf(renderReportHtml(report));
+  // fast 모드 결정 — 명시 + 자동 임계값
+  let fast    = opts.fast === true;
+  let autoFast = false;
+  if (!fast && opts.fast !== false) {
+    const previewHtml = renderReportHtml(working, { fast: false });
+    if (shouldUseFastMode(working, previewHtml)) {
+      fast = true;
+      autoFast = true;
+      console.log(`[pdf] auto-fast: articles=${(working.articles || []).length}, htmlSize=${(previewHtml.length / 1024 | 0)}KB`);
+    }
+  }
+  let report;
+  let stats = { total: 0, succeeded: 0, articleTotal: (working.articles || []).length, articlesWithImage: 0 };
+  if (fast) {
+    // 이미지 임베드 생략 — base64 다운로드/메모리 부담 회피
+    report = working;
+  } else {
+    const includeImages = orig.includeImages !== false;
+    const r = await embedImagesInReport(working, { includeImages });
+    report = r.report;
+    stats  = r.stats;
+    console.log(`[pdf] image embed: ${stats.succeeded}/${stats.total} succeeded, ${stats.articlesWithImage}/${stats.articleTotal} articles have image`);
+  }
+  const html = renderReportHtml(report, { fast });
+  const buf  = await htmlToPdfBudgeted(html, { reportId: id, mode: fast ? 'fast' : 'default' });
   const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
-  return { buf, fileName: `trend-report-${dateStr}${suffix}.pdf`, imageStats: stats };
+  return { buf, fileName: `trend-report-${dateStr}${suffix}${fast ? '-fast' : ''}.pdf`, imageStats: stats, fast, autoFast };
 }
 
 // ── 리포트 PDF — 미리보기 (inline) ──────────────
 app.get('/api/reports/:id/pdf/preview', requireAuth, async (req, res) => {
   try {
-    const { buf, fileName } = await generatePdfFor(req.params.id, { filter: req.query.filter });
+    const fast = req.query.fast === '1' ? true : req.query.fast === '0' ? false : undefined;
+    const { buf, fileName, autoFast } = await generatePdfFor(req.params.id, { filter: req.query.filter, fast });
     res.set('Content-Type',        'application/pdf');
     res.set('Content-Disposition', `inline; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.set('Cache-Control',       'no-store');
+    if (autoFast) res.set('X-PDF-Mode', 'auto-fast');
     res.send(buf);
   } catch (e) {
     console.error('[pdf:preview] generation error:', e.stack || e.message);
-    const status = e.code === 'CHROME_NOT_FOUND' ? 503 : 500;
-    res.status(status).type('text/html; charset=utf-8').send(
-      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 미리보기 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}${e.detail ? `\n\n원본 오류: ${e.detail.replace(/</g, '&lt;')}` : ''}</pre>`
-    );
+    sendPdfError(req, res, e, 'PDF 미리보기');
   }
 });
 
 // ── 리포트 PDF — 다운로드 (attachment) ──────────
 app.get('/api/reports/:id/pdf/download', requireAuth, async (req, res) => {
   try {
-    const { buf, fileName } = await generatePdfFor(req.params.id, { filter: req.query.filter });
+    const fast = req.query.fast === '1' ? true : req.query.fast === '0' ? false : undefined;
+    const { buf, fileName, autoFast } = await generatePdfFor(req.params.id, { filter: req.query.filter, fast });
     res.set('Content-Type',        'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.set('Cache-Control',       'no-store');
+    if (autoFast) res.set('X-PDF-Mode', 'auto-fast');
     res.send(buf);
   } catch (e) {
     console.error('[pdf:download] generation error:', e.stack || e.message);
-    const status = e.code === 'CHROME_NOT_FOUND' ? 503 : 500;
-    res.status(status).type('text/html; charset=utf-8').send(
-      `<pre style="font-family:'Noto Sans KR',sans-serif; padding:20px; color:#c53030;">PDF 다운로드 생성 실패\n\n${(e.message || String(e)).replace(/</g, '&lt;')}${e.detail ? `\n\n원본 오류: ${e.detail.replace(/</g, '&lt;')}` : ''}</pre>`
-    );
+    sendPdfError(req, res, e, 'PDF 다운로드');
   }
 });
 
