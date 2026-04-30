@@ -1,10 +1,20 @@
 // ─────────────────────────────────────────────
-// KeywordManager.jsx — 법무부 빠른 키워드(카테고리) + 기간 선택 + 즉시 수집 + 자동 수집 설정
+// KeywordManager.jsx — 법무부 빠른 키워드 (5 카테고리, 핵심/확장 분리)
+// + 추천 키워드 + 검색 목적 프리셋 + 전체 검색창 + 기관 프리셋 선택
 // ─────────────────────────────────────────────
 
-import { useState } from 'react';
-import { PRESET_CATEGORIES, PERIOD_OPTIONS } from '../../constants/config.js';
+import { useMemo, useState } from 'react';
+import {
+  ORG_PRESETS, listCategories, flattenAllKeywords,
+  RELATED_KEYWORDS, suggestRelated, INTENT_PRESETS, intentPreset,
+} from '../../constants/keywordPresets.js';
+import { PERIOD_OPTIONS } from '../../constants/config.js';
 import ScheduleSettings from '../schedule/ScheduleSettings.jsx';
+
+const ORG_OPTIONS = [
+  { v: 'moj',    l: '법무부' },
+  { v: 'custom', l: '사용자 지정' },
+];
 
 export default function KeywordManager({
   keywords = [], excludeKeywords = [], filterAds = true, requireAllInclude = false,
@@ -15,19 +25,61 @@ export default function KeywordManager({
 }) {
   const [input,    setInput]    = useState('');
   const [excInput, setExcInput] = useState('');
-  // 카테고리 접기/펼치기 상태 — 기본 첫 번째(보호관찰류)만 펼침
-  const [open, setOpen] = useState({ protection: true });
+
+  const [orgId,    setOrgId]    = useState('moj');
+  const categories = useMemo(() => listCategories(orgId), [orgId]);
+
+  // 활성 카테고리 — 기본 보호직(protection)
+  const defaultCat = ORG_PRESETS[orgId]?.defaultCategoryId || (categories[0]?.id || '');
+  const [activeCat, setActiveCat] = useState(defaultCat);
+  // 카테고리별 “확장 키워드 펼침” 상태
+  const [expandExt, setExpandExt] = useState({});
+  const [search, setSearch] = useState('');
+  const [intentId, setIntentId] = useState('');
+
+  const selectedSet = useMemo(() => new Set(keywords), [keywords]);
+
+  // 전체 키워드 검색 결과 (대문자/공백 정규화)
+  const searchHits = useMemo(() => {
+    const q = String(search || '').replace(/\s+/g, '').toLowerCase();
+    if (!q) return [];
+    const all = flattenAllKeywords(orgId);
+    return all.filter(k => k.replace(/\s+/g, '').toLowerCase().includes(q)).slice(0, 24);
+  }, [search, orgId]);
+
+  // 추천 키워드 — 사용자가 선택한 키워드를 기반으로
+  const relatedHits = useMemo(() => suggestRelated(keywords).slice(0, 12), [keywords]);
+
+  // 검색 목적 추천 키워드 — selectedSet 에서 이미 선택된 항목은 제거
+  const intentHits = useMemo(() => {
+    const p = intentPreset(intentId);
+    if (!p) return [];
+    return (p.keywords || []).filter(k => !selectedSet.has(k));
+  }, [intentId, selectedSet]);
 
   function addKw()      { const k = input.trim();    if (k) { onAdd(k); setInput(''); } }
   function addExclude() { const k = excInput.trim(); if (k && onAddExclude) { onAddExclude(k); setExcInput(''); } }
+
+  function addAllInCategory(cat) {
+    const all = [...(cat.core || []), ...(cat.extended || [])];
+    for (const k of all) if (!selectedSet.has(k)) onAdd(k);
+  }
+  function removeAllInCategory(cat) {
+    const all = [...(cat.core || []), ...(cat.extended || [])];
+    for (const k of all) if (selectedSet.has(k)) onRemove(k);
+  }
+  function addAllOf(list) {
+    for (const k of list) if (!selectedSet.has(k)) onAdd(k);
+  }
 
   const period = config?.collectPeriod || '7d';
 
   return (
     <div>
-      {/* 포함 키워드 */}
+      {/* ── 검색 키워드 ── */}
       <div style={S.panel}>
         <div style={S.label}>🏷 검색(포함) 키워드</div>
+
         <div style={S.row}>
           <input style={S.inp} placeholder="키워드 입력 후 Enter"
             value={input} onChange={e => setInput(e.target.value)}
@@ -35,7 +87,11 @@ export default function KeywordManager({
           <button style={S.btnDark} onClick={addKw}>추가</button>
         </div>
 
-        {keywords.length > 0 && (
+        {keywords.length === 0 ? (
+          <div style={S.emptyHint}>
+            👉 빠른 키워드를 선택하거나 직접 입력하여 모니터링을 시작하세요.
+          </div>
+        ) : (
           <>
             <div style={S.tagWrap}>
               {keywords.map(k => (
@@ -56,38 +112,178 @@ export default function KeywordManager({
           </>
         )}
 
-        {/* 법무부 빠른 키워드 — 카테고리 접기/펼치기 */}
-        <div style={S.label2}>📌 법무부 빠른 키워드</div>
-        {PRESET_CATEGORIES.map(cat => {
-          const expanded = !!open[cat.id];
-          return (
-            <div key={cat.id} style={S.catBox}>
-              <button style={S.catHead} onClick={() => setOpen(o => ({ ...o, [cat.id]: !o[cat.id] }))}>
-                <span>{expanded ? '▾' : '▸'} {cat.name}</span>
-                <span style={S.catCount}>{cat.keywords.length}개</span>
+        {onToggleRequireAll && (
+          <div style={{ marginTop: keywords.length === 0 ? 12 : 4 }}>
+            <label style={S.toggle}>
+              <input type="checkbox" checked={!!requireAllInclude}
+                onChange={e => onToggleRequireAll(e.target.checked)} />
+              <span><strong>모든 키워드를 포함하는 기사만</strong> (AND 검색) — 기본은 OR(하나라도 포함되면 수집)</span>
+            </label>
+          </div>
+        )}
+      </div>
+
+      {/* ── 추천 키워드 — 선택된 키워드 기반 ── */}
+      {relatedHits.length > 0 && (
+        <div style={S.panel}>
+          <div style={S.label}>💡 추천 키워드 — 선택한 키워드와 함께 보면 좋은 항목</div>
+          <div style={S.presetWrap}>
+            {relatedHits.map(k => (
+              <button key={k} style={{ ...S.chip, ...S.chipSuggest }} onClick={() => onAdd(k)}>
+                + {k}
               </button>
-              {expanded && (
+            ))}
+            <button style={S.chipAdd} onClick={() => addAllOf(relatedHits)}>
+              ＋ 추천 전체 추가
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── 검색 목적 프리셋 ── */}
+      <div style={S.panel}>
+        <div style={S.label}>🎯 검색 목적</div>
+        <div style={S.intentRow}>
+          {INTENT_PRESETS.map(p => (
+            <button key={p.id}
+              style={{ ...S.intentBtn, ...(intentId === p.id ? S.intentOn : {}) }}
+              onClick={() => setIntentId(intentId === p.id ? '' : p.id)}
+              title={p.desc}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {intentId && (
+          <>
+            <div style={S.intentDesc}>{intentPreset(intentId)?.desc}</div>
+            {intentHits.length > 0 ? (
+              <div style={S.presetWrap}>
+                {intentHits.map(k => (
+                  <button key={k} style={{ ...S.chip, ...S.chipIntent }} onClick={() => onAdd(k)}>
+                    + {k}
+                  </button>
+                ))}
+                <button style={S.chipAdd} onClick={() => addAllOf(intentHits)}>
+                  ＋ 목적 키워드 전체 추가
+                </button>
+              </div>
+            ) : (
+              <div style={S.intentEmpty}>
+                {(intentPreset(intentId)?.keywords?.length || 0) === 0
+                  ? '선택한 목적은 별도 추가 키워드가 없습니다 — 카테고리에서 직접 선택하세요.'
+                  : '추천 키워드가 모두 이미 추가되었습니다.'}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── 빠른 키워드 — 기관/카테고리/검색 ── */}
+      <div style={S.panel}>
+        <div style={S.headRow}>
+          <div style={S.label2}>📌 빠른 키워드</div>
+          <select style={S.orgSel} value={orgId} onChange={e => setOrgId(e.target.value)}>
+            {ORG_OPTIONS.map(o => (
+              <option key={o.v} value={o.v}
+                disabled={o.v === 'custom'}
+                title={o.v === 'custom' ? '향후 지원 예정' : ''}>
+                {o.l}{o.v === 'custom' ? ' (예정)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <input style={{ ...S.inp, marginBottom: 10 }}
+          placeholder='전체 키워드 검색 — 예: "소년" 입력 시 소년원 / 소년보호 / 청소년비행예방센터'
+          value={search} onChange={e => setSearch(e.target.value)} />
+
+        {search && (
+          <div style={S.searchBox}>
+            <div style={S.searchHead}>검색 결과 ({searchHits.length})</div>
+            {searchHits.length === 0
+              ? <div style={S.searchEmpty}>일치하는 키워드가 없습니다.</div>
+              : (
                 <div style={S.presetWrap}>
-                  {cat.keywords.map(k => (
+                  {searchHits.map(k => (
                     <button key={k}
-                      style={{ ...S.chip, ...(keywords.includes(k) ? S.chipOn : {}) }}
-                      onClick={() => keywords.includes(k) ? onRemove(k) : onAdd(k)}>
-                      {keywords.includes(k) ? '✓ ' : ''}{k}
+                      style={{ ...S.chip, ...(selectedSet.has(k) ? S.chipOn : {}) }}
+                      onClick={() => selectedSet.has(k) ? onRemove(k) : onAdd(k)}>
+                      {selectedSet.has(k) ? '✓ ' : ''}{k}
                     </button>
                   ))}
                 </div>
               )}
+          </div>
+        )}
+
+        {/* 카테고리 탭 */}
+        <div style={S.tabRow}>
+          {categories.map(cat => {
+            const active = activeCat === cat.id;
+            const selected = [...(cat.core || []), ...(cat.extended || [])].filter(k => selectedSet.has(k)).length;
+            return (
+              <button key={cat.id}
+                style={{ ...S.tab, ...(active ? S.tabOn : {}) }}
+                onClick={() => setActiveCat(cat.id)}>
+                {cat.label}
+                {selected > 0 && <span style={S.tabBadge}>{selected}</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {categories.map(cat => {
+          if (cat.id !== activeCat) return null;
+          const extOpen = expandExt[cat.id] !== false; // 기본 펼침
+          const coreSelectedCount = (cat.core || []).filter(k => selectedSet.has(k)).length;
+          const allSelectedCount  = [...(cat.core || []), ...(cat.extended || [])].filter(k => selectedSet.has(k)).length;
+          return (
+            <div key={cat.id}>
+              <div style={S.catActions}>
+                <span style={S.catCount2}>
+                  핵심 {cat.core?.length || 0} · 확장 {cat.extended?.length || 0}
+                  {allSelectedCount > 0 && <span style={S.catSelected}> · 선택 {allSelectedCount}</span>}
+                </span>
+                <span style={{ flex: 1 }} />
+                <button style={S.catBtnLight} onClick={() => addAllInCategory(cat)}>＋ 전체 추가</button>
+                <button style={S.catBtnLight} onClick={() => removeAllInCategory(cat)} disabled={allSelectedCount === 0}>
+                  ✕ 전체 해제
+                </button>
+              </div>
+
+              <div style={S.subLabel}>핵심 키워드 ({cat.core?.length || 0}) {coreSelectedCount > 0 && <span style={S.subSelected}>· 선택 {coreSelectedCount}</span>}</div>
+              <div style={S.presetWrap}>
+                {(cat.core || []).map(k => (
+                  <button key={k}
+                    style={{ ...S.chip, ...(selectedSet.has(k) ? S.chipOn : {}) }}
+                    onClick={() => selectedSet.has(k) ? onRemove(k) : onAdd(k)}>
+                    {selectedSet.has(k) ? '✓ ' : ''}{k}
+                  </button>
+                ))}
+              </div>
+
+              {(cat.extended?.length || 0) > 0 && (
+                <>
+                  <button style={S.extToggle}
+                    onClick={() => setExpandExt(s => ({ ...s, [cat.id]: !extOpen }))}>
+                    {extOpen ? '▾' : '▸'} 확장 키워드 {cat.extended.length}개 — {extOpen ? '접기' : '더보기'}
+                  </button>
+                  {extOpen && (
+                    <div style={S.presetWrap}>
+                      {cat.extended.map(k => (
+                        <button key={k}
+                          style={{ ...S.chip, ...S.chipExt, ...(selectedSet.has(k) ? S.chipOn : {}) }}
+                          onClick={() => selectedSet.has(k) ? onRemove(k) : onAdd(k)}>
+                          {selectedSet.has(k) ? '✓ ' : ''}{k}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           );
         })}
-
-        {onToggleRequireAll && (
-          <label style={S.toggle}>
-            <input type="checkbox" checked={!!requireAllInclude}
-              onChange={e => onToggleRequireAll(e.target.checked)} />
-            <span>모든 키워드를 포함하는 기사만 (AND 검색)</span>
-          </label>
-        )}
       </div>
 
       {/* 제외 키워드 */}
@@ -251,26 +447,60 @@ export default function KeywordManager({
 const S = {
   panel:    { background: 'white', borderRadius: 12, padding: 15, marginBottom: 11, boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
   label:    { fontSize: 10.5, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 10 },
-  label2:   { fontSize: 10.5, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px', marginTop: 14, marginBottom: 8 },
+  label2:   { fontSize: 10.5, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px' },
+  headRow:  { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  orgSel:   { padding: '6px 10px', border: '1.5px solid #d5d0c8', borderRadius: 7, fontSize: 12, background: 'white', fontFamily: 'inherit' },
   row:      { display: 'flex', gap: 7, marginBottom: 10 },
   inp:      { flex: 1, border: '2px solid #e5e0d8', borderRadius: 8, padding: '10px 11px', fontSize: 14, fontFamily: 'inherit', outline: 'none', background: '#fafaf8', minHeight: 44 },
   tagWrap:  { display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 },
   tag:      { display: 'flex', alignItems: 'center', gap: 4, background: '#0d1117', color: 'white', borderRadius: 20, padding: '4px 11px', fontSize: 12.5 },
   rm:       { background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, padding: 0, minWidth: 18, minHeight: 18 },
+  emptyHint:{ background: '#fffbeb', border: '1px dashed #fde68a', color: '#92400e',
+              padding: '10px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.6, marginBottom: 8 },
   clearBtn: { padding: '6px 11px', minHeight: 30, borderRadius: 6, border: '1.5px solid #fecaca',
               background: '#fff5f5', color: '#991b1b', fontSize: 11.5, fontWeight: 600,
               cursor: 'pointer', fontFamily: 'inherit', marginBottom: 10 },
 
-  catBox:   { borderRadius: 8, border: '1px solid #f0ede8', marginBottom: 6, overflow: 'hidden', background: '#fafaf8' },
-  catHead:  { width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '8px 11px', minHeight: 38, background: 'transparent', border: 'none', cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#333' },
-  catCount: { fontSize: 11, color: '#888' },
-  presetWrap:{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '4px 10px 11px' },
+  tabRow:   { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8, padding: '2px', background: '#f0ede8', borderRadius: 8 },
+  tab:      { padding: '7px 11px', minHeight: 34, border: 'none', background: 'transparent', borderRadius: 6,
+              fontSize: 12, fontWeight: 600, color: '#555', cursor: 'pointer', fontFamily: 'inherit',
+              display: 'inline-flex', gap: 5, alignItems: 'center' },
+  tabOn:    { background: '#0d1117', color: 'white' },
+  tabBadge: { background: 'rgba(255,255,255,.18)', borderRadius: 10, padding: '0 6px', fontSize: 10.5 },
+
+  catActions:{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 8px' },
+  catCount2: { fontSize: 11, color: '#888' },
+  catSelected: { color: '#0d1117', fontWeight: 700 },
+  catBtnLight:{ padding: '6px 10px', minHeight: 30, borderRadius: 6, border: '1.5px solid #d5d0c8',
+                background: 'white', color: '#444', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+
+  subLabel: { fontSize: 11, fontWeight: 700, color: '#666', marginTop: 4, marginBottom: 5 },
+  subSelected: { color: '#0d1117', marginLeft: 4 },
+
+  presetWrap:{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '2px 0 6px' },
   chip:     { padding: '5px 11px', minHeight: 32, borderRadius: 20, border: '1.5px solid #d5d0c8', background: 'white', fontSize: 11.5, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
   chipOn:   { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
+  chipExt:  { borderStyle: 'dashed', color: '#666' },
+  chipSuggest:{ background: '#eff6ff', borderColor: '#93c5fd', color: '#1d4ed8' },
+  chipIntent: { background: '#fef3c7', borderColor: '#fcd34d', color: '#92400e' },
+  chipAdd:  { padding: '5px 12px', minHeight: 32, borderRadius: 20, border: '1.5px solid #0d1117',
+              background: '#0d1117', color: 'white', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
 
-  toggle:   { display: 'flex', alignItems: 'center', gap: 7, marginTop: 12, fontSize: 12.5, color: '#444', cursor: 'pointer', minHeight: 32 },
+  extToggle:{ background: 'transparent', border: 'none', color: '#0d1117', fontSize: 12, fontWeight: 600,
+              padding: '6px 0', cursor: 'pointer', fontFamily: 'inherit' },
+
+  searchBox:{ background: '#fafaf8', border: '1px solid #f0ede8', borderRadius: 8, padding: '8px 10px', marginBottom: 10 },
+  searchHead:{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 5 },
+  searchEmpty:{ fontSize: 12, color: '#888' },
+
+  intentRow:{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 },
+  intentBtn:{ padding: '7px 11px', minHeight: 34, borderRadius: 8, border: '1.5px solid #d5d0c8',
+              background: 'white', color: '#444', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  intentOn: { background: '#92400e', color: 'white', borderColor: '#92400e' },
+  intentDesc:{ fontSize: 11.5, color: '#666', marginBottom: 6 },
+  intentEmpty:{ fontSize: 11.5, color: '#888' },
+
+  toggle:   { display: 'flex', alignItems: 'center', gap: 7, marginTop: 6, fontSize: 12.5, color: '#444', cursor: 'pointer', minHeight: 32 },
   btnDark:  { padding: '10px 14px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: '#0d1117', color: 'white', fontFamily: 'inherit', minHeight: 44 },
 
   periodRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },

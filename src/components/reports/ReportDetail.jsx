@@ -803,6 +803,8 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
               const di = report.debugInfo;
               if (di) {
                 const lines = [
+                  `선택 키워드 (${di.keywordsOriginal?.length || 0}): ${(di.keywordsOriginal || []).join(', ') || '—'}`,
+                  `검색 방식: ${di.requireAllKeywords ? 'AND (모든 키워드 포함)' : 'OR (하나라도 포함)'}`,
                   `원본 수집 ${di.totalRaw}건 (Google ${di.sourceCountsRaw?.google || 0}, Naver ${di.sourceCountsRaw?.naver || 0})`,
                   `날짜 필터 후 ${di.afterDateFilter}건 (제외 ${Math.max(0, di.totalRaw - di.afterDateFilter)}건)`,
                   `중복 제거 후 ${di.afterDedupe}건`,
@@ -810,17 +812,25 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
                     ? `AND 필터 제외 ${di.allKeywordFilteredOut}건 (필터 후 ${di.afterAllKeywordFilter}건)`
                     : null,
                   di.requireAllKeywords && di.keywordsForAllMatch?.length
-                    ? `최종 키워드: ${di.keywordsForAllMatch.join(', ')}`
+                    ? `AND 필터 적용 키워드: ${di.keywordsForAllMatch.join(', ')}`
                     : null,
                 ].filter(Boolean);
-                const guidance = di.requireAllKeywords
-                  && di.keywordsForAllMatch?.length < (di.keywordsOriginal?.length || 0)
-                  ? `안내: ${di.keywordsOriginal.join(', ')} 중 일부가 포함 관계로 판단되어 ${di.keywordsForAllMatch.join(', ')} 기준으로 필터링했습니다.`
-                  : null;
+                // 가이던스 우선순위:
+                //   ① AND 필터로 모두 제외된 경우 — 가장 흔한 0건 원인
+                //   ② collapse 가 발생한 경우 — 사용자 의도와 다를 수 있음
+                let guidance = null;
+                if (di.requireAllKeywords && di.allKeywordFilteredOut > 0 && di.afterAllKeywordFilter === 0) {
+                  guidance = '안내: "모든 키워드 포함" 옵션으로 인해 모든 결과가 제외되었습니다. 옵션을 해제하거나 키워드를 줄여보세요.';
+                } else if (di.requireAllKeywords
+                  && di.keywordsForAllMatch?.length < (di.keywordsOriginal?.length || 0)) {
+                  guidance = `안내: ${di.keywordsOriginal.join(', ')} 중 일부가 포함 관계로 판단되어 ${di.keywordsForAllMatch.join(', ')} 기준으로 필터링했습니다.`;
+                } else if (di.totalRaw === 0) {
+                  guidance = '안내: 뉴스 소스에서 검색 결과가 0건입니다. 키워드 표기(띄어쓰기/공식 명칭) 또는 수집 기간을 조정해 보세요.';
+                }
                 return (
                   <>
                     {lines.map((l, i) => <div key={i}>· {l}</div>)}
-                    {guidance && <div style={{ marginTop: 6, color: '#92400e' }}>{guidance}</div>}
+                    {guidance && <div style={{ marginTop: 6, color: '#92400e', fontWeight: 600 }}>{guidance}</div>}
                   </>
                 );
               }

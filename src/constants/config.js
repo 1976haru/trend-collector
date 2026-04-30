@@ -1,42 +1,22 @@
 // ─────────────────────────────────────────────
-// config.js — 법무부 빠른 키워드 프리셋 (카테고리)
-// 실제 RSS / SMTP / cron 설정은 모두 서버(server/) 에서 처리합니다.
+// config.js — 호환 레이어 (legacy)
+// 새 구조는 keywordPresets.js 에 있다 — 신규 코드는 그쪽을 import 한다.
 // ─────────────────────────────────────────────
 
-export const PRESET_CATEGORIES = [
-  {
-    id: 'protection',
-    name: '보호관찰 · 범죄예방 (최상위)',
-    keywords: [
-      '보호관찰', '보호관찰소', '전자감독', '소년원',
-      '청소년비행예방센터', '전자발찌', '치료감호소',
-      '범죄피해자지원', '사회봉사명령', '수강명령', '소년보호',
-    ],
-  },
-  {
-    id: 'core',
-    name: '법무부 핵심',
-    keywords: [
-      '법무부', '검찰', '교정', '출입국',
-      '교도소', '구치소', '출입국외국인청', '출입국사무소',
-      '외국인정책', '인권', '범죄예방', '법질서', '법무행정',
-    ],
-  },
-  {
-    id: 'policy',
-    name: '정책 / 이슈',
-    keywords: [
-      '검찰개혁', '교정정책', '출입국정책', '이민정책', '난민',
-      '불법체류', '마약범죄', '스토킹', '아동학대', '디지털성범죄',
-      '보이스피싱', '가석방', '형사사법',
-    ],
-  },
-];
+import { ORG_PRESETS, listCategories, flattenAllKeywords } from './keywordPresets.js';
 
-// 평면 리스트도 export — 기존 코드 호환
-export const PRESET_KEYWORDS = PRESET_CATEGORIES.flatMap(c => c.keywords);
+// legacy 카테고리 평면화 — name 기반의 옛 구조 호환
+export const PRESET_CATEGORIES = listCategories('moj').map(c => ({
+  id: c.id,
+  name: c.label,
+  keywords: [...(c.core || []), ...(c.extended || [])],
+}));
 
-// 수집 기간 옵션
+export const PRESET_KEYWORDS = flattenAllKeywords('moj');
+
+export { ORG_PRESETS };
+
+// 수집 기간 옵션 (변경 없음)
 export const PERIOD_OPTIONS = [
   { v: '24h',    label: '최근 24시간' },
   { v: '3d',     label: '최근 3일' },
