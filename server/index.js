@@ -217,26 +217,29 @@ api.put('/config', async (req, res) => {
   for (const k of allowed) {
     if (k in req.body) patch[k] = req.body[k];
   }
-  // 검증
-  if (patch.keywords && !Array.isArray(patch.keywords))     return res.status(400).json({ error: 'keywords must be array' });
-  if (patch.excludes && !Array.isArray(patch.excludes))     return res.status(400).json({ error: 'excludes must be array' });
+  // 검증 (오류 메시지는 사용자에게 그대로 노출되므로 한국어로 통일)
+  if (patch.keywords && !Array.isArray(patch.keywords))
+    return res.status(400).json({ error: 'keywords 는 배열이어야 합니다.' });
+  if (patch.excludes && !Array.isArray(patch.excludes))
+    return res.status(400).json({ error: 'excludes 는 배열이어야 합니다.' });
   if (patch.alertKeywords && !Array.isArray(patch.alertKeywords))
-    return res.status(400).json({ error: 'alertKeywords must be array' });
+    return res.status(400).json({ error: 'alertKeywords 는 배열이어야 합니다.' });
   if (patch.recipients) {
-    if (!Array.isArray(patch.recipients)) return res.status(400).json({ error: 'recipients must be array' });
+    if (!Array.isArray(patch.recipients)) return res.status(400).json({ error: 'recipients 는 배열이어야 합니다.' });
     patch.recipients = patch.recipients
       .map(s => String(s).trim())
       .filter(s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
   }
   if (patch.scheduleMode && !['daily', 'interval', 'off'].includes(patch.scheduleMode))
-    return res.status(400).json({ error: 'scheduleMode must be daily|interval|off' });
+    return res.status(400).json({ error: 'scheduleMode 는 daily / interval / off 중 하나여야 합니다.' });
   if (patch.intervalHours !== undefined) {
     const n = Number(patch.intervalHours);
-    if (!Number.isFinite(n) || n < 1 || n > 168) return res.status(400).json({ error: 'intervalHours must be 1..168' });
+    if (!Number.isFinite(n) || n < 1 || n > 168)
+      return res.status(400).json({ error: '수집 주기(시간)는 1 이상 168 이하의 숫자여야 합니다.' });
     patch.intervalHours = Math.round(n);
   }
   if (patch.reportTime && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(patch.reportTime))
-    return res.status(400).json({ error: 'reportTime must be HH:MM' });
+    return res.status(400).json({ error: '발송 시각은 HH:MM 형식이어야 합니다 (예: 09:00).' });
 
   const next = await saveConfig(patch);
 
