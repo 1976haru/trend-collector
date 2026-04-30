@@ -77,7 +77,9 @@ export function applyOverride(article, overrides = {}) {
 // 편철용 정렬 + 필터
 function buildPrintList(report, settings) {
   const overrides = report.articleOverrides || {};
-  let list = (report.articles || []).map(a => applyOverride(a, overrides)).filter(a => a._include);
+  // excluded=true 기사는 모든 출력에서 자동 제외 (편철 PDF / Word / HTML)
+  const sourceArticles = (report.articles || []).filter(a => !a.excluded);
+  let list = sourceArticles.map(a => applyOverride(a, overrides)).filter(a => a._include);
 
   if (settings.sortBy === 'date') {
     list.sort((a, b) => String(a.publishedAt || '').localeCompare(String(b.publishedAt || '')));
@@ -221,7 +223,8 @@ function renderAnalysisAppendix(report) {
 // 출력 전 품질 점검 — 본문/이미지/제목/언론사/지면 누락 카운트
 export function buildQualityReport(report) {
   const overrides = report.articleOverrides || {};
-  const list = (report.articles || []).map(a => applyOverride(a, overrides)).filter(a => a._include);
+  const list = (report.articles || []).filter(a => !a.excluded)
+    .map(a => applyOverride(a, overrides)).filter(a => a._include);
   const issues = {
     missingBody:    [],
     missingImage:   [],

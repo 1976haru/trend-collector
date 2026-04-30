@@ -11,7 +11,10 @@ import { fileURLToPath } from 'node:url';
 import authRouter, { requireAuth } from './auth.js';
 import { loadConfig, saveConfig, listReports, loadReport, saveReport, updateReportPart, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
   listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick,
-  autoSyncReportTrackingLinks } from './store.js';
+  autoSyncReportTrackingLinks,
+  excludeArticle, restoreArticle, bulkExcludeArticles, bulkRestoreArticles } from './store.js';
+import { recomputeReport } from './reportAnalyzer.js';
+import { suggestExclusionCandidates, suggestExcludeWords, scoreRelevance } from './relevance.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig, diagnoseMailError } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
@@ -216,6 +219,7 @@ api.put('/config', async (req, res) => {
     'useGoogleNews', 'useNaverNews',
     'googleTrendsEnabled', 'trendsTimeframe', 'trendsGeo',
     'articleViewMode', 'sortNegativeFirst',
+    'autoReanalyze',
     'reportMeta',
   ];
   const patch = {};
@@ -765,6 +769,140 @@ api.get('/reports/:id/quality-check', async (req, res) => {
     const r = await loadReport(req.params.id);
     res.json(buildQualityReport(r));
   } catch { res.status(404).json({ error: 'not found' }); }
+});
+
+// ──────────────────────────────────────────────
+// 기사 제외 / 복원 / 일괄 / 재분석
+// ──────────────────────────────────────────────
+async function maybeAutoReanalyze(reportId) {
+  const cfg = await loadConfig();
+  if (cfg.autoReanalyze === false) return null;
+  const orig = await loadReport(reportId);
+  const rec  = recomputeReport(orig);
+  await saveReport(rec);
+  return rec;
+}
+
+api.patch('/reports/:id/articles/:articleId/exclude', async (req, res) => {
+  try {
+    const r = await excludeArticle(req.params.id, req.params.articleId, {
+      reason: req.body?.reason,
+      by:     req.body?.by || 'admin',
+    });
+    if (!r.ok) return res.status(404).json({ error: r.error });
+    const rec = await maybeAutoReanalyze(req.params.id);
+    res.json({ ok: true, excludedCount: r.excludedCount, autoReanalyzed: !!rec, activeArticleCount: rec?.activeArticleCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+api.patch('/reports/:id/articles/:articleId/restore', async (req, res) => {
+  try {
+    const r = await restoreArticle(req.params.id, req.params.articleId, { by: req.body?.by || 'admin' });
+    if (!r.ok) return res.status(404).json({ error: r.error });
+    const rec = await maybeAutoReanalyze(req.params.id);
+    res.json({ ok: true, excludedCount: r.excludedCount, autoReanalyzed: !!rec, activeArticleCount: rec?.activeArticleCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+api.patch('/reports/:id/articles/bulk-exclude', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.articleIds) ? req.body.articleIds : [];
+    if (!ids.length) return res.status(400).json({ error: 'articleIds 배열이 필요합니다.' });
+    const r = await bulkExcludeArticles(req.params.id, ids, {
+      reason: req.body?.reason,
+      by:     req.body?.by || 'admin',
+    });
+    const rec = await maybeAutoReanalyze(req.params.id);
+    res.json({ ok: true, ...r, autoReanalyzed: !!rec, activeArticleCount: rec?.activeArticleCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+api.patch('/reports/:id/articles/bulk-restore', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.articleIds) ? req.body.articleIds : [];
+    if (!ids.length) return res.status(400).json({ error: 'articleIds 배열이 필요합니다.' });
+    const r = await bulkRestoreArticles(req.params.id, ids, { by: req.body?.by || 'admin' });
+    const rec = await maybeAutoReanalyze(req.params.id);
+    res.json({ ok: true, ...r, autoReanalyzed: !!rec, activeArticleCount: rec?.activeArticleCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 강제 재분석
+api.post('/reports/:id/reanalyze', async (req, res) => {
+  try {
+    const orig = await loadReport(req.params.id);
+    const rec  = recomputeReport(orig);
+    await saveReport(rec);
+    res.json({
+      ok: true,
+      activeArticleCount: rec.activeArticleCount,
+      excludedCount:      rec.excludedCount,
+      analysisUpdatedAt:  rec.analysisUpdatedAt,
+      sentiment:          rec.sentiment,
+      riskLevel:          rec.riskLevel,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 제외 후보 + 제외 키워드 추천
+api.get('/reports/:id/exclusion-candidates', async (req, res) => {
+  try {
+    const r = await loadReport(req.params.id);
+    const candidates = suggestExclusionCandidates(r.articles || [], r.keywords || []);
+    const excludedArticles = (r.articles || []).filter(a => a.excluded);
+    const excludeWords = suggestExcludeWords(excludedArticles, r.keywords || []);
+    res.json({
+      candidates,
+      excludeWords,
+      excludedCount: excludedArticles.length,
+      activeArticleCount: (r.articles || []).filter(a => !a.excluded).length,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 감사 로그
+api.get('/reports/:id/audit-log', async (req, res) => {
+  try {
+    const r = await loadReport(req.params.id);
+    res.json({ items: r.articleAuditLog || [], excludedCount: (r.articles || []).filter(a => a.excluded).length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 전체 리포트의 제외 사유 통계 (관리자 — 검색 품질 개선용)
+api.get('/admin/exclusion-stats', async (_req, res) => {
+  try {
+    const items = await listReports({ limit: 30 });
+    const reasonStats = {};      // 사유 → 건수
+    const sourceStats = {};      // 언론사 → 제외 건수
+    const domainStats = {};      // 도메인 → 제외 건수
+    const keywordStats = {};     // 검색 키워드 → 제외 건수
+    let totalExcluded = 0;
+    for (const meta of items) {
+      let r;
+      try { r = await loadReport(meta.id); } catch { continue; }
+      for (const a of (r.articles || [])) {
+        if (!a.excluded) continue;
+        totalExcluded++;
+        const rs = a.excludedReason || '미분류';
+        reasonStats[rs] = (reasonStats[rs] || 0) + 1;
+        if (a.source) sourceStats[a.source] = (sourceStats[a.source] || 0) + 1;
+        try {
+          const host = new URL(a.resolvedUrl || a.url || '').hostname.replace(/^www\./, '');
+          if (host) domainStats[host] = (domainStats[host] || 0) + 1;
+        } catch {}
+        if (a.keyword) keywordStats[a.keyword] = (keywordStats[a.keyword] || 0) + 1;
+      }
+    }
+    const sortDesc = obj => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ key: k, count: v }));
+    res.json({
+      reportsScanned: items.length,
+      totalExcluded,
+      byReason:  sortDesc(reasonStats),
+      bySource:  sortDesc(sourceStats).slice(0, 20),
+      byDomain:  sortDesc(domainStats).slice(0, 20),
+      byKeyword: sortDesc(keywordStats),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.use('/api', api);

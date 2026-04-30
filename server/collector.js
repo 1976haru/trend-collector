@@ -14,6 +14,7 @@ import { suggestDepartments, countDepartments } from './departments.js';
 import { fetchNaverNews, isNaverConfigured } from './sources/naver.js';
 import { fetchTrendInterest, fetchRelatedQueries, isTrendsEnabled } from './trends/googleTrends.js';
 import { classifyAgencyArticle } from './agencyClassifier.js';
+import { scoreRelevance } from './relevance.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -731,11 +732,23 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   // 6) 위험 등급 — 부정 비율과 급상승 유무로 결정
   const riskLevel = computeRiskLevel(sentiment, trending);
 
-  // 7) 부서 추천 + 우선순위 + 보고용 한 줄 (각 기사)
+  // 7) 부서 추천 + 우선순위 + 보고용 한 줄 + 키워드 관련성 점수 (각 기사)
   for (const a of processed) {
     a.departments = suggestDepartments(a);
     a.priority    = computePriority(a);
     a.briefLine   = buildBriefLine(a);
+    // 관련성 점수 — 검색 키워드와 기사 내용이 얼마나 일치하는지 (제외 후보 판단용)
+    const rel = scoreRelevance(a, cfg.keywords || []);
+    a.relevanceScore     = rel.relevanceScore;
+    a.matchedKeywords    = rel.matchedKeywords;
+    a.unmatchedKeywords  = rel.unmatchedKeywords;
+    a.relevanceLevel     = rel.relevanceLevel;
+    a.relevanceReason    = rel.relevanceReason;
+    // 신규 수집 시 제외 상태는 항상 false 로 초기화
+    a.excluded       = false;
+    a.excludedAt     = null;
+    a.excludedReason = null;
+    a.excludedBy     = null;
   }
 
   // 7.3) 소스별 통계 (병합 후 dedupe·필터 통과 기준)
@@ -911,6 +924,12 @@ export async function runCollection({ trigger = 'manual' } = {}) {
 
     // 분류된 이슈
     negativeIssues, positiveIssues, neutralIssues, actionRequired,
+
+    // 제외 / 재분석 메타
+    activeArticleCount: processed.length,
+    excludedCount:      0,
+    analysisUpdatedAt:  new Date().toISOString(),
+    articleAuditLog:    [],
   };
 
   await saveReport(report);

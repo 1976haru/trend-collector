@@ -4,12 +4,14 @@
 // 기사 본문은 토글로 펼치기/접기.
 // ─────────────────────────────────────────────
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   downloadReportPdf, previewReportPdf, reportHtmlDebugUrl,
   reextractReport, reextractArticle, downloadNegativePdf,
   downloadReportWord, downloadReportHtml, downloadReportExcel,
   listTrackingLinks, saveArticleOverrides,
+  excludeArticle, restoreArticle, bulkExcludeArticles, bulkRestoreArticles,
+  reanalyzeReport, getExclusionCandidates, getReport,
 } from '../../services/api.js';
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 import ClippingPanel from './ClippingPanel.jsx';
@@ -62,7 +64,19 @@ function PriorityBadge({ p }) {
   return <span style={{ ...S.prio, background: v.bg, color: v.fg }}>{v.icon} {p}</span>;
 }
 
-function ArticleItem({ idx, art, viewMode = 'paper', onReextract, onEditOverride, override }) {
+function RelevanceBadge({ level, score }) {
+  const map = {
+    high:   { bg: '#dcfce7', fg: '#166534', label: '관련성 높음' },
+    medium: { bg: '#dbeafe', fg: '#1d4ed8', label: '관련성 보통' },
+    low:    { bg: '#fef3c7', fg: '#92400e', label: '관련성 낮음' },
+    none:   { bg: '#fee2e2', fg: '#b91c1c', label: '관련성 없음' },
+  };
+  const v = map[level] || map['none'];
+  return <span style={{ ...S.prio, background: v.bg, color: v.fg }}>🎯 {v.label}{Number.isFinite(score) ? ` (${score})` : ''}</span>;
+}
+
+function ArticleItem({ idx, art, viewMode = 'paper', onReextract, onEditOverride, override,
+                       selectMode = false, selected = false, onSelect, onExclude, onRestore, exBusy = '' }) {
   const [busyOne, setBusyOne] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState(() => ({
@@ -101,13 +115,28 @@ function ArticleItem({ idx, art, viewMode = 'paper', onReextract, onEditOverride
   const reasons = art.sentiment?.reasons || [];
   const depts = (art.departments || []).map(d => d.name).join(', ');
   return (
-    <li style={viewMode === 'paper' ? { ...S.item, ...S.paperItem } : S.item}>
+    <li style={{ ...(viewMode === 'paper' ? { ...S.item, ...S.paperItem } : S.item),
+                ...(art.excluded ? S.itemExcluded : {}),
+                ...(selected ? S.itemSelected : {}) }}>
+      {selectMode && (
+        <label style={S.selectLabel}>
+          <input type="checkbox" checked={selected} onChange={() => onSelect && onSelect(art.id)} />
+          <span>선택</span>
+        </label>
+      )}
+      {art.excluded && (
+        <div style={S.excludedBanner}>
+          🚫 제외됨 — {art.excludedReason || '관련 없음'}
+          {art.excludedAt && <span style={{ color: '#888', fontSize: 11, marginLeft: 6 }}>({fmtRelative(art.excludedAt)})</span>}
+        </div>
+      )}
       {viewMode === 'paper' ? (
         // 원문형: 헤더 라인 (언론사 · 날짜 · 우선순위)
         <div style={S.paperSrc}>
           <span style={S.paperSrcName}>{art.source || '미상'}</span>
           {art.mediaType && <span style={S.paperBadge}>{art.mediaType}</span>}
           {art.sourceProvider && <span style={S.paperBadge}>{art.sourceProvider === 'naver' ? '🇰🇷 Naver' : '🌍 Google'}</span>}
+          {art.relevanceLevel && <RelevanceBadge level={art.relevanceLevel} score={art.relevanceScore} />}
           <span style={S.spacer} />
           <PriorityBadge p={art.priority || '참고'} />
         </div>
@@ -181,6 +210,30 @@ function ArticleItem({ idx, art, viewMode = 'paper', onReextract, onEditOverride
           <button style={S.editBtn} onClick={() => setEditMode(m => !m)}>
             {editMode ? '✕ 편철 편집 취소' : (override ? '✏️ 편철 편집 (수정됨)' : '✏️ 편철 편집')}
           </button>
+        )}
+        {/* 제외 / 복원 버튼 */}
+        {art.excluded ? (
+          onRestore && (
+            <button style={S.restoreBtn}
+              onClick={() => onRestore(art.id)}
+              disabled={exBusy === `restore:${art.id}`}>
+              {exBusy === `restore:${art.id}` ? '⏳' : '↩️ 복원'}
+            </button>
+          )
+        ) : (
+          onExclude && (
+            <select onChange={e => e.target.value && onExclude(art.id, e.target.value)}
+              disabled={exBusy === `exclude:${art.id}`}
+              value="" style={S.excludeSelect}
+              title="기사 제외 — 분석/출력에서 빠집니다">
+              <option value="">{exBusy === `exclude:${art.id}` ? '⏳' : '🚫 제외 사유…'}</option>
+              <option value="관련 없음">관련 없음</option>
+              <option value="중복">중복</option>
+              <option value="오래된 기사">오래된 기사</option>
+              <option value="키워드 불일치">키워드 불일치</option>
+              <option value="기타">기타</option>
+            </select>
+          )
         )}
       </div>
 
@@ -400,10 +453,20 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
   const [pdfError,  setPdfError]  = useState('');
   const [pdfOk,     setPdfOk]     = useState('');
   const [pdfFallback, setPdfFallback] = useState(false);
-  const [viewMode,  setViewMode]  = useState('paper');     // 'paper' | 'analytic' | 'failures'
+  // viewMode 에 'excluded' (제외 기사 보기) 추가
+  const [viewMode,  setViewMode]  = useState('paper');     // 'paper' | 'analytic' | 'failures' | 'excluded'
   const [negFirst,  setNegFirst]  = useState(true);
   const [reextBusy, setReextBusy] = useState('');     // 'all' | 'failed' | id | ''
   const [tracking, setTracking]   = useState({ count: 0, totalClicks: 0, items: [] });
+
+  // 제외 / 일괄 선택 / 후보 / 재분석 상태
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [exBusy, setExBusy] = useState('');           // 'exclude:id' | 'restore:id' | 'bulk-exclude' | 'reanalyze' | ''
+  const [exMsg, setExMsg]   = useState('');
+  const [exErr, setExErr]   = useState('');
+  const [needsReanalyze, setNeedsReanalyze] = useState(false);
+  const [candidates, setCandidates] = useState({ candidates: [], excludeWords: [] });
 
   useEffect(() => {
     let alive = true;
@@ -412,6 +475,15 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
       .catch(() => {});
     return () => { alive = false; };
   }, []);
+
+  // 제외 후보 로드
+  const refreshCandidates = useCallback(() => {
+    if (!report?.id) return;
+    getExclusionCandidates(report.id)
+      .then(r => setCandidates({ candidates: r.candidates || [], excludeWords: r.excludeWords || [] }))
+      .catch(() => {});
+  }, [report?.id]);
+  useEffect(() => { refreshCandidates(); }, [refreshCandidates]);
 
   if (!report) return null;
   const articlesRaw = report.articles || [];
@@ -423,11 +495,14 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
   const riskLevel   = report.riskLevel   || { level: '안정', reasons: [] };
   const total       = articlesRaw.length;
 
-  // 부정 우선 정렬 + 실패 전용 보기 필터
+  // 부정 우선 정렬 + 실패/제외 전용 보기 필터
+  // viewMode === 'excluded' → excluded=true 만, 그 외 모드는 excluded=false 만 (기본 숨김)
   const a = useMemo(() => {
     let list = articlesRaw;
+    if (viewMode === 'excluded') list = list.filter(x => x.excluded);
+    else                          list = list.filter(x => !x.excluded);
     if (viewMode === 'failures') list = list.filter(x => !x.extracted);
-    if (negFirst) {
+    if (negFirst && viewMode !== 'excluded') {
       const order = { 긴급: 0, 주의: 1, 참고: 2 };
       const sentOrder = { '부정': 0, '중립': 1, '긍정': 2 };
       list = [...list].sort((x, y) =>
@@ -437,6 +512,9 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
     }
     return list;
   }, [articlesRaw, negFirst, viewMode]);
+
+  const excludedCount = articlesRaw.filter(x => x.excluded).length;
+  const activeCount   = articlesRaw.length - excludedCount;
 
   // 추출 통계 (서버 stats 우선, 없으면 클라이언트 계산)
   const stats = useMemo(() => {
@@ -537,6 +615,97 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
     }
   }
 
+  // ── 제외 / 복원 / 일괄 / 재분석 핸들러 ───────────
+  async function reloadReport() {
+    try {
+      const fresh = await getReport(report.id);
+      onReportRefresh && onReportRefresh(fresh);
+      refreshCandidates();
+    } catch {}
+  }
+  async function onExclude(articleId, reason = '관련 없음') {
+    setExBusy(`exclude:${articleId}`); setExErr(''); setExMsg('');
+    try {
+      const r = await excludeArticle(report.id, articleId, reason);
+      setExMsg(`🚫 제외 완료 — ${reason} · ${r.activeArticleCount ?? '?'}건 활성`);
+      if (!r.autoReanalyzed) setNeedsReanalyze(true);
+      else                    setNeedsReanalyze(false);
+      await reloadReport();
+    } catch (e) { setExErr(e.message || String(e)); }
+    finally { setExBusy(''); }
+  }
+  async function onRestore(articleId) {
+    setExBusy(`restore:${articleId}`); setExErr(''); setExMsg('');
+    try {
+      const r = await restoreArticle(report.id, articleId);
+      setExMsg(`↩️ 복원 완료 · ${r.activeArticleCount ?? '?'}건 활성`);
+      if (!r.autoReanalyzed) setNeedsReanalyze(true);
+      else                    setNeedsReanalyze(false);
+      await reloadReport();
+    } catch (e) { setExErr(e.message || String(e)); }
+    finally { setExBusy(''); }
+  }
+  async function onBulkExclude(reason = '관련 없음') {
+    if (selectedIds.size === 0) { setExErr('선택된 기사가 없습니다.'); return; }
+    setExBusy('bulk-exclude'); setExErr(''); setExMsg('');
+    try {
+      const r = await bulkExcludeArticles(report.id, [...selectedIds], reason);
+      setExMsg(`🚫 일괄 제외 — ${r.changed}건 (${reason}) · 활성 ${r.activeArticleCount ?? '?'}건`);
+      setSelectedIds(new Set()); setSelectMode(false);
+      if (!r.autoReanalyzed) setNeedsReanalyze(true); else setNeedsReanalyze(false);
+      await reloadReport();
+    } catch (e) { setExErr(e.message || String(e)); }
+    finally { setExBusy(''); }
+  }
+  async function onBulkRestore() {
+    if (selectedIds.size === 0) { setExErr('선택된 기사가 없습니다.'); return; }
+    setExBusy('bulk-restore'); setExErr(''); setExMsg('');
+    try {
+      const r = await bulkRestoreArticles(report.id, [...selectedIds]);
+      setExMsg(`↩️ 일괄 복원 — ${r.changed}건 · 활성 ${r.activeArticleCount ?? '?'}건`);
+      setSelectedIds(new Set()); setSelectMode(false);
+      if (!r.autoReanalyzed) setNeedsReanalyze(true); else setNeedsReanalyze(false);
+      await reloadReport();
+    } catch (e) { setExErr(e.message || String(e)); }
+    finally { setExBusy(''); }
+  }
+  async function onReanalyze() {
+    setExBusy('reanalyze'); setExErr(''); setExMsg('');
+    try {
+      const r = await reanalyzeReport(report.id);
+      setExMsg(`✅ 재분석 완료: 총 ${articlesRaw.length}건 중 ${r.excludedCount}건 제외, ${r.activeArticleCount}건 기준 분석`);
+      setNeedsReanalyze(false);
+      await reloadReport();
+    } catch (e) { setExErr(e.message || String(e)); }
+    finally { setExBusy(''); }
+  }
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function selectAllVisible() {
+    setSelectedIds(new Set(a.map(x => x.id)));
+  }
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+  async function onApplyCandidates() {
+    if (!candidates.candidates.length) return;
+    if (!confirm(`제외 후보 ${candidates.candidates.length}건을 모두 제외하시겠습니까?`)) return;
+    const ids = candidates.candidates.map(c => c.id);
+    setExBusy('apply-candidates'); setExErr(''); setExMsg('');
+    try {
+      const r = await bulkExcludeArticles(report.id, ids, '키워드 불일치 (자동 후보)');
+      setExMsg(`🚫 후보 ${r.changed}건 제외 · 활성 ${r.activeArticleCount ?? '?'}건`);
+      if (!r.autoReanalyzed) setNeedsReanalyze(true); else setNeedsReanalyze(false);
+      await reloadReport();
+    } catch (e) { setExErr(e.message || String(e)); }
+    finally { setExBusy(''); }
+  }
+
   const mediaEntries = Object.entries(mediaCounts).filter(([, v]) => v > 0);
   const mediaMax     = Math.max(1, ...mediaEntries.map(([, v]) => v));
 
@@ -623,18 +792,84 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
       )}
       {pdfOk && <div style={S.okBox}>{pdfOk}</div>}
 
-      {/* 보기 모드 + 정렬 토글 */}
+      {/* 제외 / 재분석 / 후보 패널 */}
+      {(needsReanalyze || candidates.candidates.length > 0 || excludedCount > 0 || selectMode) && (
+        <div style={S.exPanel}>
+          <div style={S.exHead}>
+            <strong>📋 기사 관리</strong>
+            <span style={S.exSub}>총 {articlesRaw.length}건 · 활성 {activeCount}건 · 제외 {excludedCount}건</span>
+            {report.analysisUpdatedAt && (
+              <span style={S.exSub}>
+                {' · '}분석 갱신: {fmtRelative(report.analysisUpdatedAt)}
+              </span>
+            )}
+            <div style={{ flex: 1 }} />
+            {needsReanalyze && (
+              <button onClick={onReanalyze} disabled={exBusy === 'reanalyze'} style={S.reanalyzeBtn}>
+                {exBusy === 'reanalyze' ? '⏳ 재분석 중…' : '🔁 재분석 필요 — 클릭'}
+              </button>
+            )}
+          </div>
+          {candidates.candidates.length > 0 && (
+            <div style={S.candidateBox}>
+              ⚠️ 키워드 불일치로 의심되는 기사 <strong>{candidates.candidates.length}건</strong> — 검토 후 제외하세요.
+              <button onClick={onApplyCandidates} disabled={!!exBusy} style={S.smBtnDanger}>후보 전체 제외</button>
+              <button onClick={() => setCandidates({ ...candidates, candidates: [] })} disabled={!!exBusy} style={S.smBtn}>후보 무시</button>
+            </div>
+          )}
+          {candidates.excludeWords.length > 0 && (
+            <div style={S.wordBox}>
+              💡 자주 등장하는 제외 키워드 후보:{' '}
+              {candidates.excludeWords.slice(0, 8).map(w => (
+                <span key={w.word} style={S.tag}>{w.word} ×{w.count}</span>
+              ))}
+              <span style={S.tagHint}>(관리 → 키워드에 직접 추가)</span>
+            </div>
+          )}
+          {selectMode && (
+            <div style={S.selectBar}>
+              ✅ 선택 <strong>{selectedIds.size}건</strong>
+              <button onClick={selectAllVisible} style={S.smBtn}>현재 보기 전체 선택</button>
+              <button onClick={clearSelection} style={S.smBtn}>선택 해제</button>
+              <div style={{ flex: 1 }} />
+              <select onChange={e => e.target.value && onBulkExclude(e.target.value)}
+                disabled={selectedIds.size === 0 || !!exBusy}
+                value="" style={S.bulkSelect}>
+                <option value="">선택 제외 사유…</option>
+                <option value="관련 없음">관련 없음</option>
+                <option value="중복">중복</option>
+                <option value="오래된 기사">오래된 기사</option>
+                <option value="키워드 불일치">키워드 불일치</option>
+                <option value="기타">기타</option>
+              </select>
+              <button onClick={onBulkRestore} disabled={selectedIds.size === 0 || !!exBusy} style={S.smBtn}>
+                선택 복원
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {exMsg && <div style={S.okBox}>{exMsg}</div>}
+      {exErr && <div style={S.errBox}>⚠️ {exErr}</div>}
+
+      {/* 보기 모드 + 정렬 토글 + 선택 모드 */}
       <div style={S.toolRow}>
         <div style={S.viewToggle}>
           {[
             { v: 'paper',    l: '📰 원문형' },
             { v: 'analytic', l: '📊 분석형' },
             { v: 'failures', l: `⚠️ 실패만 (${stats.failed})`, dim: stats.failed === 0 },
+            { v: 'excluded', l: `🚫 제외 기사 (${excludedCount})`, dim: excludedCount === 0 },
           ].map(o => (
             <button key={o.v} onClick={() => setViewMode(o.v)}
               disabled={o.dim}
               style={{ ...S.viewBtn, ...(viewMode === o.v ? S.viewOn : {}), ...(o.dim ? S.viewDim : {}) }}>{o.l}</button>
           ))}
+          <button onClick={() => { setSelectMode(v => !v); if (selectMode) clearSelection(); }}
+            style={{ ...S.viewBtn, ...(selectMode ? S.viewOn : {}) }}
+            title="여러 기사 일괄 제외/복원">
+            {selectMode ? '✅ 선택 모드' : '🔘 선택 모드'}
+          </button>
         </div>
         <label style={S.negToggle}>
           <input type="checkbox" checked={negFirst} onChange={e => setNegFirst(e.target.checked)} />
@@ -1040,6 +1275,12 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
                   setPdfError(e.message);
                 }
               }}
+              selectMode={selectMode}
+              selected={selectedIds.has(art.id)}
+              onSelect={toggleSelect}
+              onExclude={onExclude}
+              onRestore={onRestore}
+              exBusy={exBusy}
             />
           ))}
         </ol>
@@ -1050,6 +1291,27 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
 const S = {
   wrap: { display: 'flex', flexDirection: 'column', gap: 11 },
+
+  // ── 기사 제외 / 일괄 / 재분석 ─────────────────
+  exPanel:     { background: 'white', borderRadius: 12, padding: '12px 14px', boxShadow: '0 1px 2px rgba(0,0,0,.06)', display: 'flex', flexDirection: 'column', gap: 8 },
+  exHead:      { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, flexWrap: 'wrap' },
+  exSub:       { fontSize: 12, color: '#666' },
+  reanalyzeBtn:{ padding: '8px 14px', minHeight: 38, borderRadius: 8, border: 'none', background: '#dc2626', color: 'white', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
+  candidateBox:{ background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 8, padding: '8px 11px', fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  wordBox:     { background: '#f0f9ff', border: '1px solid #bae6fd', color: '#075985', borderRadius: 8, padding: '8px 11px', fontSize: 12, lineHeight: 1.7 },
+  tag:         { display: 'inline-block', padding: '1px 7px', margin: '0 4px 0 0', borderRadius: 10, background: 'white', border: '1px solid #93c5fd', fontSize: 11.5, color: '#1d4ed8' },
+  tagHint:     { fontSize: 11, color: '#888', marginLeft: 6 },
+  selectBar:   { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, flexWrap: 'wrap', padding: '6px 8px', background: '#fafaf6', borderRadius: 7 },
+  bulkSelect:  { padding: '6px 8px', minHeight: 32, borderRadius: 6, border: '1px solid #d5d0c8', background: 'white', fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' },
+  smBtn:       { padding: '5px 11px', minHeight: 30, borderRadius: 6, border: '1px solid #d5d0c8', background: 'white', color: '#444', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  smBtnDanger: { padding: '5px 11px', minHeight: 30, borderRadius: 6, border: '1px solid #fca5a5', background: '#fef2f2', color: '#b91c1c', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
+  excludeSelect:{ padding: '5px 8px', minHeight: 30, borderRadius: 6, border: '1px solid #fca5a5', background: '#fef2f2', color: '#b91c1c', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  restoreBtn:  { padding: '5px 11px', minHeight: 30, borderRadius: 6, border: '1px solid #86efac', background: '#dcfce7', color: '#166534', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
+  itemExcluded:{ opacity: 0.6, background: '#fafafa', borderLeft: '3px solid #fca5a5' },
+  itemSelected:{ outline: '2px solid #2563eb', outlineOffset: -2 },
+  selectLabel: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#475569', marginBottom: 4 },
+  excludedBanner:{ background: '#fee2e2', color: '#991b1b', padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, marginBottom: 6 },
+
   actBar: { display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' },
   back:   { padding: '9px 13px', minHeight: 40, borderRadius: 8, border: '1.5px solid #d5d0c8', background: 'white', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
   spacer: { flex: 1 },

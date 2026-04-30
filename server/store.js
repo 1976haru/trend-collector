@@ -48,6 +48,9 @@ const DEFAULT_CONFIG = {
   articleViewMode:     'paper',     // 'paper'(원문형) | 'analytic'(분석형)
   sortNegativeFirst:   true,        // 부정/긴급 우선 정렬
 
+  // ── 기사 제외 / 재분석 ───────────────────────
+  autoReanalyze:       true,        // 제외/복원 시 자동 재분석
+
   // ── 자동 발송 ─────────────────────────────────
   autoEmail:          true,
   attachPdf:          true,         // 자동 메일에 PDF 첨부
@@ -303,6 +306,112 @@ export function safeMailSettings(s = {}) {
     feedbackTo:      s.feedbackTo || '',
     reportDefaultTo: s.reportDefaultTo || '',
   };
+}
+
+// ── 기사 제외 / 복원 / 일괄 처리 / 이력 ──────────
+//
+// 정책:
+//   - 실제로 article 을 삭제하지 않고 article.excluded = true 로 표시.
+//   - report.articleAuditLog 에 모든 exclude/restore 이벤트를 append.
+//   - excludedReason / excludedAt / excludedBy 는 article 객체에 부착.
+//   - articles 배열 자체는 보존 — 추후 복원 / 감사용.
+//
+// 호출자는 store 함수만 사용해 atomic 하게 갱신한다.
+
+function appendAuditLog(report, entry) {
+  if (!Array.isArray(report.articleAuditLog)) report.articleAuditLog = [];
+  report.articleAuditLog.push(entry);
+  // 최근 500건 유지 — 디스크 용량 제한
+  if (report.articleAuditLog.length > 500) {
+    report.articleAuditLog = report.articleAuditLog.slice(-500);
+  }
+}
+
+/**
+ * 기사 1건 제외.
+ * @param {string} reportId
+ * @param {string} articleId
+ * @param {Object} ctx { reason, by }
+ * @returns {{ ok, article, excludedCount }}
+ */
+export async function excludeArticle(reportId, articleId, ctx = {}) {
+  const r = await loadReport(reportId);
+  const arts = r.articles || [];
+  const a = arts.find(x => x.id === articleId);
+  if (!a) return { ok: false, error: 'article not found' };
+  const now = new Date().toISOString();
+  const prevExcluded = !!a.excluded;
+  a.excluded       = true;
+  a.excludedAt     = now;
+  a.excludedReason = String(ctx.reason || '').slice(0, 100) || '관련 없음';
+  a.excludedBy     = String(ctx.by || 'admin').slice(0, 60);
+  if (!prevExcluded) {
+    appendAuditLog(r, { articleId, action: 'exclude', reason: a.excludedReason, at: now, by: a.excludedBy });
+  }
+  await saveReport(r);
+  return { ok: true, article: a, excludedCount: arts.filter(x => x.excluded).length };
+}
+
+/** 기사 1건 복원. */
+export async function restoreArticle(reportId, articleId, ctx = {}) {
+  const r = await loadReport(reportId);
+  const arts = r.articles || [];
+  const a = arts.find(x => x.id === articleId);
+  if (!a) return { ok: false, error: 'article not found' };
+  if (!a.excluded) return { ok: true, article: a, excludedCount: arts.filter(x => x.excluded).length };
+  const now = new Date().toISOString();
+  const prevReason = a.excludedReason;
+  a.excluded       = false;
+  a.excludedAt     = null;
+  a.excludedReason = null;
+  appendAuditLog(r, { articleId, action: 'restore', reason: prevReason || '', at: now, by: String(ctx.by || 'admin').slice(0, 60) });
+  await saveReport(r);
+  return { ok: true, article: a, excludedCount: arts.filter(x => x.excluded).length };
+}
+
+/** 일괄 제외. */
+export async function bulkExcludeArticles(reportId, articleIds = [], ctx = {}) {
+  const r = await loadReport(reportId);
+  const arts = r.articles || [];
+  const ids = new Set(articleIds);
+  const now = new Date().toISOString();
+  const reason = String(ctx.reason || '관련 없음').slice(0, 100);
+  const by     = String(ctx.by || 'admin').slice(0, 60);
+  let changed = 0;
+  for (const a of arts) {
+    if (!ids.has(a.id)) continue;
+    if (a.excluded) continue;
+    a.excluded = true;
+    a.excludedAt = now;
+    a.excludedReason = reason;
+    a.excludedBy = by;
+    appendAuditLog(r, { articleId: a.id, action: 'exclude', reason, at: now, by });
+    changed++;
+  }
+  if (changed) await saveReport(r);
+  return { ok: true, changed, excludedCount: arts.filter(a => a.excluded).length };
+}
+
+/** 일괄 복원. */
+export async function bulkRestoreArticles(reportId, articleIds = [], ctx = {}) {
+  const r = await loadReport(reportId);
+  const arts = r.articles || [];
+  const ids = new Set(articleIds);
+  const now = new Date().toISOString();
+  const by  = String(ctx.by || 'admin').slice(0, 60);
+  let changed = 0;
+  for (const a of arts) {
+    if (!ids.has(a.id)) continue;
+    if (!a.excluded) continue;
+    const prev = a.excludedReason;
+    a.excluded = false;
+    a.excludedAt = null;
+    a.excludedReason = null;
+    appendAuditLog(r, { articleId: a.id, action: 'restore', reason: prev || '', at: now, by });
+    changed++;
+  }
+  if (changed) await saveReport(r);
+  return { ok: true, changed, excludedCount: arts.filter(a => a.excluded).length };
 }
 
 // ── 추적 링크 (보도자료 클릭 추적) ─────────────

@@ -141,6 +141,32 @@ export function reextractArticle(id, articleId) {
   return request('POST', `/api/reports/${encodeURIComponent(id)}/articles/${encodeURIComponent(articleId)}/reextract`, {});
 }
 
+// 기사 제외 / 복원 / 일괄 / 재분석
+export function excludeArticle(id, articleId, reason) {
+  return request('PATCH', `/api/reports/${encodeURIComponent(id)}/articles/${encodeURIComponent(articleId)}/exclude`, { reason });
+}
+export function restoreArticle(id, articleId) {
+  return request('PATCH', `/api/reports/${encodeURIComponent(id)}/articles/${encodeURIComponent(articleId)}/restore`, {});
+}
+export function bulkExcludeArticles(id, articleIds, reason) {
+  return request('PATCH', `/api/reports/${encodeURIComponent(id)}/articles/bulk-exclude`, { articleIds, reason });
+}
+export function bulkRestoreArticles(id, articleIds) {
+  return request('PATCH', `/api/reports/${encodeURIComponent(id)}/articles/bulk-restore`, { articleIds });
+}
+export function reanalyzeReport(id) {
+  return request('POST', `/api/reports/${encodeURIComponent(id)}/reanalyze`);
+}
+export function getExclusionCandidates(id) {
+  return request('GET', `/api/reports/${encodeURIComponent(id)}/exclusion-candidates`);
+}
+export function getAuditLog(id) {
+  return request('GET', `/api/reports/${encodeURIComponent(id)}/audit-log`);
+}
+export function getExclusionStats() {
+  return request('GET', '/api/admin/exclusion-stats');
+}
+
 // 관리자
 export const listFeedback         = ()           => request('GET',   '/api/admin/feedback');
 export const markFeedbackRead     = (id, read=true) => request('PATCH', `/api/admin/feedback/${encodeURIComponent(id)}/read`, { read });

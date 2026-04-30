@@ -401,6 +401,7 @@ function addArticleEditSheet(wb, report) {
 }
 
 // ── 메인 ───────────────────────────────────
+// excluded=true 기사는 모든 시트에서 자동 제외하고, 별도 "제외기사" 시트에 모아 보존.
 export async function reportToXlsx(report, ctx = {}) {
   const tracking = ctx.tracking || { totalLinks: 0, totalClicks: 0, items: [] };
   const wb = new ExcelJS.Workbook();
@@ -408,18 +409,57 @@ export async function reportToXlsx(report, ctx = {}) {
   wb.created   = new Date();
   wb.title     = report.title || '법무부 언론보도 분석';
 
-  addSummarySheet(wb, report, tracking);
+  // 활성/제외 기사 분리 — report 객체 자체는 변경하지 않는다
+  const allArticles    = report.articles || [];
+  const activeArticles = allArticles.filter(a => !a.excluded);
+  const excludedArticles = allArticles.filter(a => a.excluded);
+  const reportActive = { ...report, articles: activeArticles };
 
-  const articles = report.articles || [];
-  addArticleSheet(wb, '2.전체기사', articles);
-  addMediaTocSheet(wb, report);
-  addArticleSheet(wb, '4.기관배포자료', articles.filter(a => a.articleSource === 'agency'));
-  addReCitationSheet(wb, report);
+  addSummarySheet(wb, reportActive, tracking);
+  addArticleSheet(wb, '2.전체기사', activeArticles);
+  addMediaTocSheet(wb, reportActive);
+  addArticleSheet(wb, '4.기관배포자료', activeArticles.filter(a => a.articleSource === 'agency'));
+  addReCitationSheet(wb, reportActive);
   addClickSheet(wb, tracking);
   addAutoTrackingSheet(wb, tracking);
-  addArticleSheet(wb, '7.부정이슈', articles.filter(a => a.sentiment?.label === '부정'));
-  addDeptResponseSheet(wb, report);
-  addArticleEditSheet(wb, report);
+  addArticleSheet(wb, '7.부정이슈', activeArticles.filter(a => a.sentiment?.label === '부정'));
+  addDeptResponseSheet(wb, reportActive);
+  addArticleEditSheet(wb, reportActive);
+  addExcludedSheet(wb, excludedArticles);
 
   return wb.xlsx.writeBuffer().then(b => Buffer.from(b));
+}
+
+// 제외 기사 시트 — 사용자가 제외 처리한 기사들의 사유 / 매체 / URL / 매칭 키워드
+function addExcludedSheet(wb, excludedArticles) {
+  const ws = wb.addWorksheet('제외기사');
+  ws.columns = [
+    { header: '제외 사유',     key: 'reason',  width: 16 },
+    { header: '제외 시간',     key: 'at',      width: 22 },
+    { header: '제목',          key: 'title',   width: 60 },
+    { header: '언론사',        key: 'source',  width: 18 },
+    { header: '원래 감정',     key: 'sent',    width: 10 },
+    { header: '관련성 점수',   key: 'rscore',  width: 12 },
+    { header: '매칭 키워드',   key: 'matched', width: 30 },
+    { header: 'URL',          key: 'url',     width: 60 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  for (const a of excludedArticles) {
+    const row = ws.addRow({
+      reason:  a.excludedReason || '미분류',
+      at:      a.excludedAt ? fmtKST(a.excludedAt) : '',
+      title:   a.title || '',
+      source:  a.source || '',
+      sent:    a.sentiment?.label || '',
+      rscore:  a.relevanceScore ?? '',
+      matched: (a.matchedKeywords || []).join(', '),
+      url:     a.url || '',
+    });
+    if (a.url) {
+      row.getCell('url').value = { text: a.url, hyperlink: a.url };
+      row.getCell('url').font  = { color: { argb: 'FF2563EB' }, underline: true, name: 'Malgun Gothic' };
+    }
+  }
+  if (!excludedArticles.length) ws.addRow({ reason: '—', at: '', title: '제외된 기사 없음', source: '', sent: '', rscore: '', matched: '', url: '' });
+  autoFitColumns(ws);
 }

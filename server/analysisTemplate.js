@@ -44,9 +44,9 @@ function topNamesFrom(arr, n) {
   return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, c]) => ({ name: k, count: c }));
 }
 
-// 1페이지 요약 데이터
+// 1페이지 요약 데이터 — excluded=true 기사는 모든 분석에서 자동 제외
 export function buildOnePageSummary(report) {
-  const total = (report.articles || []).length;
+  const total = (report.articles || []).filter(a => !a.excluded).length;
   const sent  = report.sentiment   || {};
   const ag    = report.agencyStats || {};
   const pub   = report.publicityStats || {};
@@ -68,7 +68,7 @@ export function buildOnePageSummary(report) {
 
 // 주요 이슈 TOP 5 — 이슈 유형별 + 상위 매체 / 감정 / 대응 필요도
 export function buildTopIssues(report, limit = 5) {
-  const articles = report.articles || [];
+  const articles = (report.articles || []).filter(a => !a.excluded);
   const counts = {};
   for (const a of articles) {
     const t = a.sentiment?.issueType;
@@ -291,11 +291,11 @@ ${fontLink}
   <h1>9. 향후 모니터링 필요 키워드</h1>
   <ul class="a-bullet">${imp.watch.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
 
-  <!-- 붙임: 전체 기사 목록 -->
+  <!-- 붙임: 전체 기사 목록 (제외 기사 자동 제외) -->
   <h1>붙임. 전체 기사 목록</h1>
   ${sum.totalArticles ? `<table>
     <tr><th>#</th><th>날짜</th><th>제목</th><th>매체</th><th>유형</th><th>감정</th></tr>
-    ${(report.articles || []).map((a, i) => `<tr>
+    ${(report.articles || []).filter(a => !a.excluded).map((a, i) => `<tr>
       <td>${i + 1}</td>
       <td>${esc(a.date || '')}</td>
       <td>${esc((a.title || '').slice(0, 90))}</td>

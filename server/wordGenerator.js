@@ -231,8 +231,10 @@ function buildImplications(report) {
 }
 
 // ── 메인 — 보고서 → docx Buffer ────────────────
+// excluded=true 기사는 모든 출력에서 자동 제외 — 진입점에서 한 번에 필터링한 r 사본 사용
 export async function reportToDocx(report, ctx = {}) {
-  const r           = report || {};
+  const _r          = report || {};
+  const r           = { ..._r, articles: (_r.articles || []).filter(a => !a.excluded) };
   const meta        = ctx.reportMeta || r.reportMeta || {};
   const trackingTotals = ctx.trackingTotals || { totalLinks: 0, totalClicks: 0, items: [] };
   const total       = (r.articles || []).length;
@@ -663,7 +665,9 @@ function tocLine(media, pageLabel, title, page) {
 export async function clippingToDocx(report, ctx = {}) {
   const settings = { ...defaultPrintSettings(report), ...(report.printSettings || {}), ...(ctx.settings || {}) };
   const overrides = report.articleOverrides || {};
-  const list = (report.articles || []).map(a => applyOverride(a, overrides)).filter(a => a._include);
+  // excluded=true 기사는 편철 출력에서 자동 제외
+  const sourceArts = (report.articles || []).filter(a => !a.excluded);
+  const list = sourceArts.map(a => applyOverride(a, overrides)).filter(a => a._include);
 
   // 언론사별 그룹
   const byMedia = new Map();
