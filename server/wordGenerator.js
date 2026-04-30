@@ -238,7 +238,7 @@ function buildImplications(report) {
 // excluded=true 기사는 모든 출력에서 자동 제외 — 진입점에서 한 번에 필터링한 r 사본 사용
 export async function reportToDocx(report, ctx = {}) {
   const _r          = report || {};
-  const r           = { ..._r, articles: (_r.articles || []).filter(a => !a.excluded) };
+  const r           = { ..._r, articles: (_r.articles || []).filter(a => !a.excluded && a.relevancePassed !== false) };
   const meta        = ctx.reportMeta || r.reportMeta || {};
   const trackingTotals = ctx.trackingTotals || { totalLinks: 0, totalClicks: 0, items: [] };
   const total       = (r.articles || []).length;
@@ -712,7 +712,7 @@ export async function clippingToDocx(report, ctx = {}) {
   const settings = { ...defaultPrintSettings(report), ...(report.printSettings || {}), ...(ctx.settings || {}) };
   const overrides = report.articleOverrides || {};
   // excluded=true 기사는 편철 출력에서 자동 제외
-  const sourceArts = (report.articles || []).filter(a => !a.excluded);
+  const sourceArts = (report.articles || []).filter(a => !a.excluded && a.relevancePassed !== false);
   const list = sourceArts.map(a => applyOverride(a, overrides)).filter(a => a._include);
 
   // 언론사별 그룹

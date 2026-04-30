@@ -18,6 +18,9 @@ import { loadConfig, saveConfig, listReports, loadReport, saveReport, updateRepo
 import { testCustomSource } from './sources/customSources.js';
 import { recomputeReport } from './reportAnalyzer.js';
 import { suggestExclusionCandidates, suggestExcludeWords, scoreRelevance } from './relevance.js';
+import { detectSearchIntent } from './searchIntent.js';
+import { rescoreReport } from './relevanceScorer.js';
+import { cleanArticleContent } from './articleCleaner.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig, diagnoseMailError } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
@@ -997,6 +1000,54 @@ api.patch('/reports/:id/articles/bulk-restore', async (req, res) => {
     const r = await bulkRestoreArticles(req.params.id, ids, { by: req.body?.by || 'admin' });
     const rec = await maybeAutoReanalyze(req.params.id);
     res.json({ ok: true, ...r, autoReanalyzed: !!rec, activeArticleCount: rec?.activeArticleCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 기존 리포트 관련성 재검사 — 새 점수 엔진 + 도메인/노이즈 사전 적용
+//   1. 각 article 의 cleanText / 새 relevance 필드 재계산
+//   2. autoExcluded 자동 set (system-auto)
+//   3. recomputeReport 로 통계 갱신
+api.post('/reports/:id/relevance-recheck', async (req, res) => {
+  try {
+    const orig = await loadReport(req.params.id);
+    const cfg  = await loadConfig();
+    const intent = detectSearchIntent(
+      orig.keywords || cfg.keywords || [],
+      orig.searchIntent?.category || cfg.selectedQuickCategory || null,
+      { searchMode: req.body?.searchMode || 'strict' }
+    );
+    intent.expandedKeywords = orig.expandedKeywords || [];
+
+    // 본문 cleanText 갱신
+    for (const a of (orig.articles || [])) {
+      if (a.contentText && !a.cleanText) {
+        const c = cleanArticleContent(a.contentText);
+        a.cleanText        = c.cleanText;
+        a.boilerplateRatio = c.boilerplateRatio;
+        a.bodyQualityScore = c.bodyQualityScore;
+      }
+    }
+    // 점수 재적용
+    const stats = rescoreReport(orig, intent);
+    orig.searchIntent     = { ...orig.searchIntent, intentName: intent.intentName, category: intent.category, searchMode: intent.searchMode };
+    orig.relevanceQuality = {
+      total:               stats.total,
+      pass:                stats.pass,
+      autoExcluded:        stats.autoExcluded,
+      manualExcluded:      stats.manualExcluded,
+      byLevel:             stats.byLevel,
+      byNoiseCategory:     stats.byNoiseCategory,
+      autoExcludeReasons:  stats.autoExcludeReasons,
+    };
+    // 통계 재계산 (active 기준)
+    const rec = recomputeReport(orig);
+    await saveReport(rec);
+    res.json({
+      ok: true,
+      relevanceQuality: rec.relevanceQuality,
+      activeArticleCount: rec.activeArticleCount,
+      excludedCount:      rec.excludedCount,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

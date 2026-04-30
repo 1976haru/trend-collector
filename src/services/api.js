@@ -157,6 +157,9 @@ export function bulkRestoreArticles(id, articleIds) {
 export function reanalyzeReport(id) {
   return request('POST', `/api/reports/${encodeURIComponent(id)}/reanalyze`);
 }
+export function relevanceRecheckReport(id, body = {}) {
+  return request('POST', `/api/reports/${encodeURIComponent(id)}/relevance-recheck`, body);
+}
 export function getExclusionCandidates(id) {
   return request('GET', `/api/reports/${encodeURIComponent(id)}/exclusion-candidates`);
 }

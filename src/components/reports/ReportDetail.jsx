@@ -18,6 +18,7 @@ import ClippingPanel from './ClippingPanel.jsx';
 import YouTubeInsightCard from './YouTubeInsightCard.jsx';
 import CollectionDiagnosticsCard from './CollectionDiagnosticsCard.jsx';
 import RelevanceQualityCard from './RelevanceQualityCard.jsx';
+import SearchQualityCard from './SearchQualityCard.jsx';
 
 function safeUrl(u = '') {
   const s = String(u).trim();
@@ -931,6 +932,9 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
       {/* 보고용 핵심 요약 카드 — 한눈에 파악 */}
       <HighlightCard report={report} />
+
+      {/* 검색 품질 진단 — 도메인 의도 / 자동 제외 사유 / 재검사 버튼 */}
+      <SearchQualityCard report={report} onRefresh={reloadReport} />
 
       {/* 수집 진단 — 키워드 × 소스 단계별 카운트 (누락 진단용) */}
       <CollectionDiagnosticsCard report={report} />

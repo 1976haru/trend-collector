@@ -19,6 +19,18 @@ import { fetchOfficialAgencyNews, isOfficialAgencyEnabled, DEFAULT_AGENCY_DOMAIN
 import { fetchCustomSourceNews } from './sources/customSources.js';
 import { fetchGoogleAll } from './sources/google.js';
 import { fetchYouTubeInsightsForKeywords, isYouTubeDataEnabled, isYouTubeTrendsEnabled } from './youtube/index.js';
+import { detectSearchIntent } from './searchIntent.js';
+import { rescoreReport } from './relevanceScorer.js';
+import { cleanArticleContent } from './articleCleaner.js';
+
+/**
+ * activeArticles 헬퍼 — 모든 분석 / 출력에서 반드시 이 함수만 사용한다.
+ * report.articles 를 직접 사용하면 자동 제외 / 수동 제외 기사가 섞여 들어가
+ * 통계가 오염된다.
+ */
+export function getActiveArticles(report) {
+  return (report?.articles || []).filter(a => !a.excluded && a.relevancePassed !== false);
+}
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -842,12 +854,31 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     a.relevanceLevel           = rel.relevanceLevel;
     a.relevanceReason          = rel.relevanceReason;
     a.isIrrelevantCandidate    = rel.isIrrelevantCandidate;
-    // 신규 수집 시 제외 상태는 항상 false 로 초기화
+    // 신규 수집 시 제외 상태는 항상 false 로 초기화 (rescoreReport 가 추후 강제 제외)
     a.excluded       = false;
     a.excludedAt     = null;
     a.excludedReason = null;
     a.excludedBy     = null;
+
+    // 본문 잡텍스트 정제 — bodyQualityScore / boilerplateRatio 부착
+    if (a.contentText) {
+      const cleaned = cleanArticleContent(a.contentText);
+      a.cleanText           = cleaned.cleanText;
+      a.boilerplateRatio    = cleaned.boilerplateRatio;
+      a.bodyQualityScore    = cleaned.bodyQualityScore;
+      a.removedBlocksCount  = cleaned.removedBlocksCount;
+    }
   }
+
+  // 7.1) 새 점수 엔진 — 도메인 맥락 / 노이즈 / 자동 제외 판정.
+  //      strict 모드 (기본) 에서는 무관 기사가 자동으로 excluded=true 로 처리됨.
+  const intent = detectSearchIntent(cfg.keywords || [], cfg.selectedQuickCategory || null, {
+    searchMode: cfg.searchMode || 'strict',
+  });
+  intent.expandedKeywords = Array.from(expandedKeywordsUsed);
+  // article 객체에 직접 set — rescoreReport 가 보고서 단위로 일괄 처리
+  const relevanceStats = rescoreReport({ articles: processed }, intent);
+  console.log(`[collector] relevance: total=${relevanceStats.total} pass=${relevanceStats.pass} autoExcluded=${relevanceStats.autoExcluded} (${intent.intentName} / ${intent.searchMode})`);
 
   // 7.3) 소스별 통계 (병합 후 dedupe·필터 통과 기준)
   const sourceCounts = processed.reduce((m, a) => {
@@ -1044,11 +1075,33 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     // 분류된 이슈
     negativeIssues, positiveIssues, neutralIssues, actionRequired,
 
-    // 제외 / 재분석 메타
-    activeArticleCount: processed.length,
-    excludedCount:      0,
+    // 제외 / 재분석 메타 — relevanceStats 결과 반영
+    activeArticleCount: processed.filter(a => !a.excluded).length,
+    excludedCount:      processed.filter(a => a.excluded).length,
     analysisUpdatedAt:  new Date().toISOString(),
-    articleAuditLog:    [],
+    articleAuditLog:    processed
+      .filter(a => a.autoExcluded && a.excludedBy === 'system-auto')
+      .map(a => ({ articleId: a.id, action: 'exclude', reason: a.autoExcludeReason || 'auto', at: a.excludedAt, by: 'system-auto' })),
+
+    // 검색 의도 + 품질 진단 (UI / Word / Excel 표시)
+    searchIntent: {
+      domain:       intent.domain,
+      category:     intent.category,
+      intentName:   intent.intentName,
+      strictMode:   intent.strictMode,
+      searchMode:   intent.searchMode,
+      userKeywords: intent.userKeywords,
+      expandedKeywords: intent.expandedKeywords,
+    },
+    relevanceQuality: {
+      total:               relevanceStats.total,
+      pass:                relevanceStats.pass,
+      autoExcluded:        relevanceStats.autoExcluded,
+      manualExcluded:      relevanceStats.manualExcluded,
+      byLevel:             relevanceStats.byLevel,
+      byNoiseCategory:     relevanceStats.byNoiseCategory,
+      autoExcludeReasons:  relevanceStats.autoExcludeReasons,
+    },
   };
 
   await saveReport(report);

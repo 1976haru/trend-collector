@@ -94,7 +94,9 @@ function buildSummaryText({ articles, keywords, mediaCounts, sentiment, trending
  */
 export function recomputeReport(report) {
   const allArticles    = report.articles || [];
-  const activeArticles = allArticles.filter(a => !a.excluded);
+  // active = excluded=false AND relevancePassed !== false
+  // (relevancePassed 가 명시적으로 false 인 기사는 strict 모드 자동 제외 대상)
+  const activeArticles = allArticles.filter(a => !a.excluded && a.relevancePassed !== false);
   const excludedCount  = allArticles.length - activeArticles.length;
 
   // 1) 감정 — 기사 객체에 기존 sentiment 가 있어도 재계산 (제외 후 일관성 보장)

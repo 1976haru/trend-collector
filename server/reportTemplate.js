@@ -214,7 +214,7 @@ export function renderReportHtml(report, opts = {}) {
   } = report;
 
   // excluded=true 기사는 모든 출력에서 자동 제외
-  const articles = rawArticles.filter(a => !a.excluded);
+  const articles = rawArticles.filter(a => !a.excluded && a.relevancePassed !== false);
   const total = articles.length;
   const periodLabel = period
     ? `${fmtDate(period.from)} ~ ${fmtDate(period.to)}`
@@ -526,7 +526,7 @@ export function renderReportHtml(report, opts = {}) {
 // ── 메일 본문 (text) ────────────────────────────
 export function renderReportText(report) {
   const { keywords = [], articles: rawArticles = [], generatedAt, briefingText = {}, sentiment = {}, mediaCounts = {}, riskLevel = {} } = report;
-  const articles = rawArticles.filter(a => !a.excluded);
+  const articles = rawArticles.filter(a => !a.excluded && a.relevancePassed !== false);
   const lines = [];
   lines.push(report.title || '법무부 언론보도 모니터링 일일보고');
   lines.push(`발행: ${fmtKST(generatedAt)} · 총 ${articles.length}건`);
@@ -559,7 +559,7 @@ export function renderReportEmailHtml(report, baseUrl) {
     keywords = [], articles: rawArticles = [], generatedAt, briefingText = {}, sentiment = {},
     mediaCounts = {}, trending = [], riskLevel = { level: '안정', reasons: [] },
   } = report;
-  const articles = rawArticles.filter(a => !a.excluded);
+  const articles = rawArticles.filter(a => !a.excluded && a.relevancePassed !== false);
   const top = articles.slice(0, 10);
   const previewLink  = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/reports/${encodeURIComponent(report.id)}/pdf/preview`  : '';
   const downloadLink = baseUrl ? `${baseUrl.replace(/\/$/, '')}/api/reports/${encodeURIComponent(report.id)}/pdf/download` : '';

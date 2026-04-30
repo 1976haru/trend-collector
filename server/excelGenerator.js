@@ -411,7 +411,7 @@ export async function reportToXlsx(report, ctx = {}) {
 
   // 활성/제외 기사 분리 — report 객체 자체는 변경하지 않는다
   const allArticles    = report.articles || [];
-  const activeArticles = allArticles.filter(a => !a.excluded);
+  const activeArticles = allArticles.filter(a => !a.excluded && a.relevancePassed !== false);
   const excludedArticles = allArticles.filter(a => a.excluded);
   const reportActive = { ...report, articles: activeArticles };
 
