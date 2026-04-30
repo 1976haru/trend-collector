@@ -11,6 +11,7 @@ import RecentReports    from './components/reports/RecentReports.jsx';
 import ReportDetail     from './components/reports/ReportDetail.jsx';
 import RecipientSettings from './components/recipients/RecipientSettings.jsx';
 import AdminPanel       from './components/admin/AdminPanel.jsx';
+import Help             from './components/help/Help.jsx';
 import FeedbackModal    from './components/feedback/FeedbackModal.jsx';
 
 import { useAuth }    from './hooks/useAuth.js';
@@ -157,6 +158,8 @@ export default function App() {
         )}
 
         {tab === 'admin' && <AdminPanel />}
+
+        {tab === 'help' && <Help />}
       </main>
 
       <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />

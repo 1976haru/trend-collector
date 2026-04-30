@@ -7,6 +7,7 @@ const TABS = [
   { id: 'reports',  label: '리포트',  icon: '📰' },
   { id: 'mail',     label: '수신자',  icon: '📧' },
   { id: 'admin',    label: '설정',    icon: '🛠' },
+  { id: 'help',     label: '도움말',  icon: '❓' },
 ];
 
 export default function TabBar({ active, onChange, counts = {}, onLogout }) {

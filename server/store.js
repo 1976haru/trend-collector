@@ -156,11 +156,21 @@ const MAIL_PATH = () => path.join(DATA_DIR, 'mail.json');
 
 const DEFAULT_MAIL_SETTINGS = {
   enabled:           false,         // 메일 발송 ON/OFF
+  // ── 발송 방식 (provider) ─────
+  // 'smtp'     : nodemailer SMTP (Render Free 플랜에서 포트 차단 가능)
+  // 'resend'   : Resend API (https://resend.com) — RESEND_API_KEY 필요
+  // 'sendgrid' : SendGrid API (https://sendgrid.com)
+  // 'none'     : 저장만 — 실제 발송 안 함 (기능개선 제안 등은 data/ 에 저장)
+  provider:          'smtp',
+  // SMTP
   host:              '',
   port:              587,
   secure:            false,
   user:              '',
   password:          '',            // 평문 저장 (data/ 는 .gitignore)
+  // API 방식
+  apiKey:            '',            // Resend / SendGrid API key (provider 별 공통 슬롯)
+  // 공통
   from:              '',
   feedbackTo:        '',            // 비어 있으면 환경변수 / 기본값 사용
   reportDefaultTo:   '',            // 정보용 (실제 리포트 수신자는 config.recipients)
@@ -180,8 +190,13 @@ export async function saveMailSettings(patch) {
   await ensureDirs();
   const current = await loadMailSettings();
   const next = { ...current, ...patch };
-  // password 가 빈 문자열로 들어오면 기존 값을 유지
+  // 비밀 값(password / apiKey) 이 빈 문자열로 들어오면 기존 값을 유지 — 실수 덮어쓰기 방지
   if (patch.password === undefined || patch.password === '') next.password = current.password;
+  if (patch.apiKey   === undefined || patch.apiKey   === '') next.apiKey   = current.apiKey;
+  // provider 검증
+  if (patch.provider && !['smtp', 'resend', 'sendgrid', 'none'].includes(patch.provider)) {
+    next.provider = current.provider || 'smtp';
+  }
   await fs.writeFile(MAIL_PATH(), JSON.stringify(next, null, 2), 'utf8');
   return next;
 }
@@ -253,15 +268,17 @@ export function safeSourceSettings(s = {}) {
   };
 }
 
-/** API 응답용 — 비밀번호는 절대 반환하지 않고 hasPassword 로만 노출. */
+/** API 응답용 — 비밀번호 / API key 는 절대 반환하지 않고 boolean 으로만 노출. */
 export function safeMailSettings(s = {}) {
   return {
     enabled:         !!s.enabled,
+    provider:        s.provider || 'smtp',
     host:            s.host || '',
     port:            Number(s.port || 587),
     secure:          !!s.secure,
     user:            s.user || '',
     hasPassword:     !!s.password,
+    hasApiKey:       !!s.apiKey,
     from:            s.from || '',
     feedbackTo:      s.feedbackTo || '',
     reportDefaultTo: s.reportDefaultTo || '',

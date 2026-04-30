@@ -12,7 +12,7 @@ import authRouter, { requireAuth } from './auth.js';
 import { loadConfig, saveConfig, listReports, loadReport, saveReport, updateReportPart, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
   listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick } from './store.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
-import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig } from './mailer.js';
+import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig, diagnoseMailError } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { renderClippingHtml, buildQualityReport } from './clippingTemplate.js';
 import { renderAnalysisHtml } from './analysisTemplate.js';
@@ -314,7 +314,8 @@ api.get('/admin/mail-settings', async (_req, res) => {
 
 api.put('/admin/mail-settings', async (req, res) => {
   try {
-    const allowed = ['enabled', 'host', 'port', 'secure', 'user', 'password', 'from', 'feedbackTo', 'reportDefaultTo'];
+    const allowed = ['enabled', 'provider', 'host', 'port', 'secure', 'user', 'password',
+                     'apiKey', 'from', 'feedbackTo', 'reportDefaultTo'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     if (patch.port !== undefined) {
@@ -324,6 +325,8 @@ api.put('/admin/mail-settings', async (req, res) => {
     }
     if (patch.feedbackTo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(patch.feedbackTo))
       return res.status(400).json({ error: 'feedbackTo 이메일 형식이 올바르지 않습니다.' });
+    if (patch.provider && !['smtp', 'resend', 'sendgrid', 'none'].includes(patch.provider))
+      return res.status(400).json({ error: 'provider 가 유효하지 않습니다 (smtp / resend / sendgrid / none).' });
     const next = await saveMailSettings(patch);
     reloadMailer();
     res.json({ ok: true, stored: safeMailSettings(next) });
@@ -349,24 +352,25 @@ api.post('/admin/mail-settings/test', async (req, res) => {
     await sendMail({
       to,
       subject: '[Trend Collector] 메일 설정 테스트',
-      text:    '이 메일은 Trend Collector 메일 설정 화면에서 보낸 테스트입니다. 정상적으로 도착했다면 SMTP 설정이 올바릅니다.',
+      text:    '이 메일은 Trend Collector 메일 설정 화면에서 보낸 테스트입니다. 정상적으로 도착했다면 메일 설정이 올바릅니다.',
       html:    `<div style="font-family:'Noto Sans KR',sans-serif; line-height:1.6;">
                   <h3>📨 Trend Collector 메일 설정 테스트</h3>
                   <p>이 메일은 관리자 화면에서 보낸 <b>테스트 메일</b>입니다.</p>
-                  <p>정상 도착했다면 SMTP 설정이 올바릅니다.</p>
+                  <p>정상 도착했다면 메일 설정이 올바릅니다.</p>
                   <hr/><div style="color:#888; font-size:12px;">발송 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}</div>
                 </div>`,
     });
     res.json({ ok: true, sentTo: to });
   } catch (e) {
-    // 인증/포트/TLS/네트워크 오류를 사용자 친화적으로 분류
-    const msg = e.message || String(e);
-    let hint = '';
-    if (/EAUTH|535|invalid login|authentication/i.test(msg))   hint = '인증 실패 — 사용자명/비밀번호를 확인하세요.';
-    else if (/ECONNECTION|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH/i.test(msg)) hint = '네트워크/호스트 오류 — SMTP_HOST 와 방화벽을 확인하세요.';
-    else if (/ECONNREFUSED|ETIMEDOUT/i.test(msg))              hint = '연결 거부/타임아웃 — 포트(예: 465 또는 587) 와 secure 설정을 확인하세요.';
-    else if (/TLS|SSL|certificate/i.test(msg))                 hint = 'TLS 오류 — secure 옵션이나 인증서 설정을 확인하세요.';
-    res.status(500).json({ ok: false, error: msg, hint });
+    const active = await getActiveMailConfig().catch(() => null);
+    const diag = diagnoseMailError(e, active?.provider || '메일');
+    res.status(500).json({
+      ok:    false,
+      error: e.message || String(e),
+      type:  diag.type,
+      hint:  diag.hint,
+      provider: active?.provider || null,
+    });
   }
 });
 
