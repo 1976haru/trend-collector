@@ -89,29 +89,41 @@ export function scoreRelevance(article = {}, keywords = []) {
 
   // 확장 검색으로 추가된 기사 — 사용자 키워드와 직접 매칭이 안 돼도
   // 확장 키워드(relatedKeywordSource) 가 본문에 있으면 +1 가산
-  if (matchedSet.size === 0 && article.relatedKeywordSource) {
+  const matchedExpandedKeywords = [];
+  if (article.relatedKeywordSource) {
     const re = normalize(article.relatedKeywordSource);
     if (re && (fields.title.includes(re) || fields.summary.includes(re) || fields.contentText.includes(re))) {
-      score += 1;
+      matchedExpandedKeywords.push(article.relatedKeywordSource);
+      // 직접 매칭이 0 일 때만 점수 가산 (이미 매칭이 있으면 인플레 방지)
+      if (matchedSet.size === 0) score += 1;
     }
   }
 
-  const level = score >= 5 ? 'high'
-              : score >= 2 ? 'medium'
+  // 임계값 강화 — high≥7 / medium 3-6 / low 1-2 / none 0
+  const level = score >= 7 ? 'high'
+              : score >= 3 ? 'medium'
               : score >= 1 ? 'low'
               : 'none';
 
+  // 관련 없음 후보 — 사용자 제외 후보로 자동 표시 (자동 삭제 X)
+  //   matchedKeywords 가 0 건 OR relevanceScore ≤ 1
+  const isIrrelevantCandidate = matchedKeywords.length === 0 || score <= 1;
+
   const reason = matchedKeywords.length === 0
-    ? `선택 키워드 ${kws.length}개 중 매칭 0건 — 본문/제목/요약에 모두 미발견`
+    ? (matchedExpandedKeywords.length > 0
+        ? `선택 키워드 직접 매칭 0건 — 확장 키워드 '${matchedExpandedKeywords[0]}' 만 매칭됨 (점수 ${score})`
+        : `선택 키워드 ${kws.length}개 중 매칭 0건 — 본문/제목/요약에 모두 미발견`)
     : `매칭 ${matchedKeywords.length}/${kws.length}: ${matchedKeywords.slice(0, 3).join(', ')}${matchedKeywords.length > 3 ? '…' : ''} (점수 ${score})`;
 
   return {
     relevanceScore: score,
     matchedKeywords,
+    matchedExpandedKeywords,
     unmatchedKeywords,
     relevanceLevel: level,
     relevanceReason: reason,
     relevanceMatches: matches,
+    isIrrelevantCandidate,
   };
 }
 

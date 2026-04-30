@@ -215,5 +215,6 @@ export function recomputeReport(report) {
     activeArticleCount: activeArticles.length,
     excludedCount,
     analysisUpdatedAt: new Date().toISOString(),
+    needsReanalysis:   false,
   };
 }

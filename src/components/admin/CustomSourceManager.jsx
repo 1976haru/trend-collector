@@ -21,12 +21,14 @@ export default function CustomSourceManager({ stored, active, onChanged }) {
   const [renderGuideOpen, setRenderGuideOpen] = useState(false);
   const [officialEnabled, setOfficialEnabled] = useState(stored?.officialAgencyEnabled !== false);
   const [expandKW,        setExpandKW]        = useState(stored?.expandKeywords !== false);
+  const [googleFb,        setGoogleFb]        = useState(!!stored?.googleFallbackEnabled);
   const [diag,            setDiag]            = useState(null);
   const fileRef = useRef(null);
 
   useEffect(() => { setItems(stored?.customSources || []); }, [stored]);
   useEffect(() => { setOfficialEnabled(stored?.officialAgencyEnabled !== false); }, [stored?.officialAgencyEnabled]);
   useEffect(() => { setExpandKW(stored?.expandKeywords !== false); }, [stored?.expandKeywords]);
+  useEffect(() => { setGoogleFb(!!stored?.googleFallbackEnabled); }, [stored?.googleFallbackEnabled]);
 
   // 환경변수 진단 — 카드 자동 로드 + 새로고침 버튼 제공
   async function loadDiag() {
@@ -248,6 +250,15 @@ NAVER_CLIENT_SECRET=발급받은_값`}</pre>
           <input type="checkbox" checked={!!officialEnabled}
             onChange={e => { setOfficialEnabled(e.target.checked); saveToggle({ officialAgencyEnabled: e.target.checked }); }} />
           <span><strong>공식기관 직접 수집</strong> — moj.go.kr / korea.kr / corrections.go.kr / immigration.go.kr / spo.go.kr / hikorea.go.kr 사이트별 검색 (권장 ON)</span>
+        </label>
+        <label style={S.toggleRow}>
+          <input type="checkbox" checked={!!googleFb}
+            onChange={e => { setGoogleFb(e.target.checked); saveToggle({ googleFallbackEnabled: e.target.checked }); }} />
+          <span>
+            <strong>Google HTML fallback 강제 ON</strong> — Google News RSS 외에 Google News/Web HTML 검색도 항상 추가 호출.
+            기본값 OFF (RSS 결과 &lt; 5건 일 때만 자동 fallback).
+            ※ Google 자동화 차단으로 빈 결과가 자주 나올 수 있으나, 진단 패널에 정확한 사유가 표시됩니다.
+          </span>
         </label>
         <label style={S.toggleRow}>
           <input type="checkbox" checked={!!expandKW}

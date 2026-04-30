@@ -44,10 +44,10 @@ async function main() {
     assert(r.matchedKeywords.includes('보호관찰'));
     assert(r.unmatchedKeywords.length === 0);
   });
-  await test('제목에만 매칭 — 점수 5, level=high', () => {
+  await test('제목에만 매칭 — 점수 5, level=medium (high≥7 임계값 강화)', () => {
     const r = rel.scoreRelevance({ title: '검찰개혁 논의', summary: '관계 없는 내용', contentText: '' }, ['검찰개혁']);
     assert(r.relevanceScore === 5);
-    assert(r.relevanceLevel === 'high');
+    assert(r.relevanceLevel === 'medium', `level=${r.relevanceLevel}`);
   });
   await test('요약에만 매칭 — 점수 3, level=medium', () => {
     const r = rel.scoreRelevance({ title: '관계 없음', summary: '교정시설 점검 결과', contentText: '' }, ['교정']);

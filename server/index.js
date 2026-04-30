@@ -89,6 +89,7 @@ app.get('/api/health', async (_req, res) => {
         clientIdMasked:       naverCfg.clientIdMasked || null,
         // 4 소스 활성 상태 — UI 진단 카드용
         officialAgencyEnabled: stored.officialAgencyEnabled !== false,
+        googleFallbackEnabled: !!stored.googleFallbackEnabled,
         customSourcesCount:   (stored.customSources || []).filter(s => s.enabled !== false).length,
         expandKeywords:       stored.expandKeywords !== false,
         lastNaverTest:        stored.lastNaverTest || null,

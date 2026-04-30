@@ -16,6 +16,8 @@ import {
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 import ClippingPanel from './ClippingPanel.jsx';
 import YouTubeInsightCard from './YouTubeInsightCard.jsx';
+import CollectionDiagnosticsCard from './CollectionDiagnosticsCard.jsx';
+import RelevanceQualityCard from './RelevanceQualityCard.jsx';
 
 function safeUrl(u = '') {
   const s = String(u).trim();
@@ -496,13 +498,14 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
   const riskLevel   = report.riskLevel   || { level: '안정', reasons: [] };
   const total       = articlesRaw.length;
 
-  // 부정 우선 정렬 + 실패/제외 전용 보기 필터
+  // 부정 우선 정렬 + 실패/제외/관련없음후보 전용 보기 필터
   // viewMode === 'excluded' → excluded=true 만, 그 외 모드는 excluded=false 만 (기본 숨김)
   const a = useMemo(() => {
     let list = articlesRaw;
     if (viewMode === 'excluded') list = list.filter(x => x.excluded);
     else                          list = list.filter(x => !x.excluded);
-    if (viewMode === 'failures') list = list.filter(x => !x.extracted);
+    if (viewMode === 'failures')   list = list.filter(x => !x.extracted);
+    if (viewMode === 'irrelevant') list = list.filter(x => x.isIrrelevantCandidate);
     if (negFirst && viewMode !== 'excluded') {
       const order = { 긴급: 0, 주의: 1, 참고: 2 };
       const sentOrder = { '부정': 0, '중립': 1, '긍정': 2 };
@@ -707,6 +710,21 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
     finally { setExBusy(''); }
   }
 
+  // 관련 없음 후보 (isIrrelevantCandidate=true) 일괄 제외 — RelevanceQualityCard 에서 호출
+  async function onBulkExcludeIrrelevant() {
+    const irr = (articlesRaw || []).filter(a => !a.excluded && a.isIrrelevantCandidate);
+    if (!irr.length) { setExErr('관련 없음 후보가 없습니다.'); return; }
+    if (!confirm(`관련 없음 후보 ${irr.length}건을 모두 제외하시겠습니까?\n(점수 ≤ 1 또는 매칭 키워드 0건)`)) return;
+    setExBusy('bulk-exclude'); setExErr(''); setExMsg('');
+    try {
+      const r = await bulkExcludeArticles(report.id, irr.map(a => a.id), '관련 없음 (자동 후보)');
+      setExMsg(`🚫 관련 없음 후보 ${r.changed}건 제외 · 활성 ${r.activeArticleCount ?? '?'}건`);
+      if (!r.autoReanalyzed) setNeedsReanalyze(true); else setNeedsReanalyze(false);
+      await reloadReport();
+    } catch (e) { setExErr(e.message || String(e)); }
+    finally { setExBusy(''); }
+  }
+
   const mediaEntries = Object.entries(mediaCounts).filter(([, v]) => v > 0);
   const mediaMax     = Math.max(1, ...mediaEntries.map(([, v]) => v));
 
@@ -794,7 +812,7 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
       {pdfOk && <div style={S.okBox}>{pdfOk}</div>}
 
       {/* 제외 / 재분석 / 후보 패널 */}
-      {(needsReanalyze || candidates.candidates.length > 0 || excludedCount > 0 || selectMode) && (
+      {(needsReanalyze || report.needsReanalysis || candidates.candidates.length > 0 || excludedCount > 0 || selectMode) && (
         <div style={S.exPanel}>
           <div style={S.exHead}>
             <strong>📋 기사 관리</strong>
@@ -805,7 +823,7 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
               </span>
             )}
             <div style={{ flex: 1 }} />
-            {needsReanalyze && (
+            {(needsReanalyze || report.needsReanalysis) && (
               <button onClick={onReanalyze} disabled={exBusy === 'reanalyze'} style={S.reanalyzeBtn}>
                 {exBusy === 'reanalyze' ? '⏳ 재분석 중…' : '🔁 재분석 필요 — 클릭'}
               </button>
@@ -856,12 +874,16 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
       {/* 보기 모드 + 정렬 토글 + 선택 모드 */}
       <div style={S.toolRow}>
         <div style={S.viewToggle}>
-          {[
-            { v: 'paper',    l: '📰 원문형' },
-            { v: 'analytic', l: '📊 분석형' },
-            { v: 'failures', l: `⚠️ 실패만 (${stats.failed})`, dim: stats.failed === 0 },
-            { v: 'excluded', l: `🚫 제외 기사 (${excludedCount})`, dim: excludedCount === 0 },
-          ].map(o => (
+          {(() => {
+            const irrelevantCount = articlesRaw.filter(x => !x.excluded && x.isIrrelevantCandidate).length;
+            return [
+              { v: 'paper',      l: '📰 원문형' },
+              { v: 'analytic',   l: '📊 분석형' },
+              { v: 'failures',   l: `⚠️ 실패만 (${stats.failed})`, dim: stats.failed === 0 },
+              { v: 'irrelevant', l: `🎯 관련 없음 후보 (${irrelevantCount})`, dim: irrelevantCount === 0 },
+              { v: 'excluded',   l: `🚫 제외 기사 (${excludedCount})`, dim: excludedCount === 0 },
+            ];
+          })().map(o => (
             <button key={o.v} onClick={() => setViewMode(o.v)}
               disabled={o.dim}
               style={{ ...S.viewBtn, ...(viewMode === o.v ? S.viewOn : {}), ...(o.dim ? S.viewDim : {}) }}>{o.l}</button>
@@ -909,6 +931,17 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
       {/* 보고용 핵심 요약 카드 — 한눈에 파악 */}
       <HighlightCard report={report} />
+
+      {/* 수집 진단 — 키워드 × 소스 단계별 카운트 (누락 진단용) */}
+      <CollectionDiagnosticsCard report={report} />
+
+      {/* 관련성 품질 — high/medium/low/none 분포 + 관련 없음 후보 일괄 제외 */}
+      <RelevanceQualityCard
+        report={report}
+        exBusy={exBusy}
+        onShowOnlyIrrelevant={() => setViewMode('irrelevant')}
+        onBulkExcludeIrrelevant={onBulkExcludeIrrelevant}
+      />
 
       {/* YouTube 관심도 / 영상 반응 (활성 시) */}
       {report.youtubeInsights && <YouTubeInsightCard youtubeInsights={report.youtubeInsights} />}

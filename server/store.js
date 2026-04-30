@@ -215,6 +215,9 @@ const DEFAULT_SOURCE_SETTINGS = {
   // 공식 기관 보도자료 직접 수집 (Google site: 검색)
   officialAgencyEnabled: true,
   officialAgencyDomains: [],          // 빈 배열 → DEFAULT_AGENCY_DOMAINS 사용
+  // Google 검색 누락 보완 — RSS + HTML fallback 강제 ON.
+  // 기본 false: RSS 결과 < 5 일 때만 자동 fallback. true: 항상 fallback 추가.
+  googleFallbackEnabled: false,
   // 사용자 지정 뉴스 소스 (RSS / 검색 URL 템플릿)
   customSources: [],
   // 검색 누락 보완 — RELATED_KEYWORDS 기반 확장 검색 ON/OFF
@@ -284,6 +287,7 @@ export async function saveSourceSettings(patch) {
         .filter(Boolean);
     }
     if ('officialAgencyEnabled' in patch) next.officialAgencyEnabled = !!patch.officialAgencyEnabled;
+    if ('googleFallbackEnabled' in patch) next.googleFallbackEnabled = !!patch.googleFallbackEnabled;
     if ('expandKeywords' in patch)        next.expandKeywords        = !!patch.expandKeywords;
     if (patch.lastNaverTest !== undefined) next.lastNaverTest = patch.lastNaverTest;
     next.updatedAt = new Date().toISOString();
@@ -316,6 +320,7 @@ export function safeSourceSettings(s = {}) {
     hasNaverClientSecret:   !!s.naverClientSecret,
     officialAgencyEnabled:  s.officialAgencyEnabled !== false,
     officialAgencyDomains:  Array.isArray(s.officialAgencyDomains) ? s.officialAgencyDomains : [],
+    googleFallbackEnabled:  !!s.googleFallbackEnabled,
     customSources:          cs.map(x => ({
       id: x.id, name: x.name || '', url: x.url || '', type: x.type || 'rss',
       agencyCategory: x.agencyCategory || '', enabled: x.enabled !== false,
@@ -483,9 +488,10 @@ export async function excludeArticle(reportId, articleId, ctx = {}) {
   a.excludedBy     = String(ctx.by || 'admin').slice(0, 60);
   if (!prevExcluded) {
     appendAuditLog(r, { articleId, action: 'exclude', reason: a.excludedReason, at: now, by: a.excludedBy });
+    r.needsReanalysis = true;
   }
   await saveReport(r);
-  return { ok: true, article: a, excludedCount: arts.filter(x => x.excluded).length };
+  return { ok: true, article: a, excludedCount: arts.filter(x => x.excluded).length, needsReanalysis: !!r.needsReanalysis };
 }
 
 /** 기사 1건 복원. */
@@ -501,8 +507,9 @@ export async function restoreArticle(reportId, articleId, ctx = {}) {
   a.excludedAt     = null;
   a.excludedReason = null;
   appendAuditLog(r, { articleId, action: 'restore', reason: prevReason || '', at: now, by: String(ctx.by || 'admin').slice(0, 60) });
+  r.needsReanalysis = true;
   await saveReport(r);
-  return { ok: true, article: a, excludedCount: arts.filter(x => x.excluded).length };
+  return { ok: true, article: a, excludedCount: arts.filter(x => x.excluded).length, needsReanalysis: !!r.needsReanalysis };
 }
 
 /** 일괄 제외. */
@@ -524,8 +531,11 @@ export async function bulkExcludeArticles(reportId, articleIds = [], ctx = {}) {
     appendAuditLog(r, { articleId: a.id, action: 'exclude', reason, at: now, by });
     changed++;
   }
-  if (changed) await saveReport(r);
-  return { ok: true, changed, excludedCount: arts.filter(a => a.excluded).length };
+  if (changed) {
+    r.needsReanalysis = true;
+    await saveReport(r);
+  }
+  return { ok: true, changed, excludedCount: arts.filter(a => a.excluded).length, needsReanalysis: !!r.needsReanalysis };
 }
 
 /** 일괄 복원. */
@@ -546,8 +556,11 @@ export async function bulkRestoreArticles(reportId, articleIds = [], ctx = {}) {
     appendAuditLog(r, { articleId: a.id, action: 'restore', reason: prev || '', at: now, by });
     changed++;
   }
-  if (changed) await saveReport(r);
-  return { ok: true, changed, excludedCount: arts.filter(a => a.excluded).length };
+  if (changed) {
+    r.needsReanalysis = true;
+    await saveReport(r);
+  }
+  return { ok: true, changed, excludedCount: arts.filter(a => a.excluded).length, needsReanalysis: !!r.needsReanalysis };
 }
 
 // ── 추적 링크 (보도자료 클릭 추적) ─────────────

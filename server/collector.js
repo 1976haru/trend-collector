@@ -17,6 +17,7 @@ import { classifyAgencyArticle } from './agencyClassifier.js';
 import { scoreRelevance } from './relevance.js';
 import { fetchOfficialAgencyNews, isOfficialAgencyEnabled, DEFAULT_AGENCY_DOMAINS } from './sources/officialAgency.js';
 import { fetchCustomSourceNews } from './sources/customSources.js';
+import { fetchGoogleAll } from './sources/google.js';
 import { fetchYouTubeInsightsForKeywords, isYouTubeDataEnabled, isYouTubeTrendsEnabled } from './youtube/index.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
@@ -174,7 +175,18 @@ function expandKeywords(keyword, enabled = true, alreadySelected = []) {
 async function fetchAllSources(keyword, cfg, srcSettings = {}) {
   const tasks = [];
   if (cfg.useGoogleNews !== false) {
-    tasks.push({ name: 'google', p: fetchRss(keyword) });
+    // Google 다층 수집 — RSS + (선택) HTML fallback. 결과는 sourceProvider 별 분리.
+    tasks.push({
+      name: 'google-multi',
+      p:    fetchGoogleAll(keyword, {
+        fallbackEnabled:    !!srcSettings.googleFallbackEnabled,    // 강제 ON
+        fallbackOnLowResult: 5,                                      // RSS 결과 < 5 시 자동 fallback
+      }).then(r => {
+        // collector 의 진단 매트릭스 가 sourceProvider 별로 카운트하므로 r.articles 만 펼친다.
+        // 부가 정보는 errors 배열로 흘려 디버그에 남긴다.
+        return { _multi: true, articles: r.articles, errors: r.errors, counts: r.counts };
+      }),
+    });
   }
   if (cfg.useNaverNews && isNaverConfigured()) {
     tasks.push({ name: 'naver', p: fetchNaverNews(keyword, { display: MAX_PER_KEYWORD }) });
@@ -209,7 +221,14 @@ async function fetchAllSources(keyword, cfg, srcSettings = {}) {
   results.forEach((r, i) => {
     const t = tasks[i];
     if (r.status === 'fulfilled') {
-      articles.push(...(r.value || []));
+      const v = r.value;
+      // Google 다층 수집 — 내부 errors 도 위로 전파 (HTML fallback 차단 등 진단용)
+      if (v && v._multi) {
+        articles.push(...(v.articles || []));
+        for (const e of (v.errors || [])) errors.push(e);
+      } else {
+        articles.push(...(v || []));
+      }
     } else {
       const msg = r.reason?.message || String(r.reason);
       errors.push({ keyword, source: t.name, error: msg });
@@ -701,9 +720,9 @@ export async function runCollection({ trigger = 'manual' } = {}) {
   if (processed.length > 30) processed = processed.slice(0, 30);
   const cFinal = countByKeySrc(processed);
 
-  // 진단 데이터 빌드 — 키워드 × 소스 매트릭스 (4종)
+  // 진단 데이터 빌드 — 키워드 × 소스 매트릭스 (6종 — google 3-layer 분리)
   const collectionDiagnostics = [];
-  const sources = ['google', 'naver', 'officialAgency', 'custom'];
+  const sources = ['google-rss', 'google-news-html', 'google-web-html', 'naver', 'officialAgency', 'custom'];
   for (const kw of cfg.keywords) {
     for (const sp of sources) {
       const k = `${kw}//${sp}`;
@@ -816,11 +835,13 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     a.briefLine   = buildBriefLine(a);
     // 관련성 점수 — 검색 키워드와 기사 내용이 얼마나 일치하는지 (제외 후보 판단용)
     const rel = scoreRelevance(a, cfg.keywords || []);
-    a.relevanceScore     = rel.relevanceScore;
-    a.matchedKeywords    = rel.matchedKeywords;
-    a.unmatchedKeywords  = rel.unmatchedKeywords;
-    a.relevanceLevel     = rel.relevanceLevel;
-    a.relevanceReason    = rel.relevanceReason;
+    a.relevanceScore           = rel.relevanceScore;
+    a.matchedKeywords          = rel.matchedKeywords;
+    a.matchedExpandedKeywords  = rel.matchedExpandedKeywords;
+    a.unmatchedKeywords        = rel.unmatchedKeywords;
+    a.relevanceLevel           = rel.relevanceLevel;
+    a.relevanceReason          = rel.relevanceReason;
+    a.isIrrelevantCandidate    = rel.isIrrelevantCandidate;
     // 신규 수집 시 제외 상태는 항상 false 로 초기화
     a.excluded       = false;
     a.excludedAt     = null;
