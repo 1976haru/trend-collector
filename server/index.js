@@ -21,6 +21,7 @@ import { suggestExclusionCandidates, suggestExcludeWords, scoreRelevance } from 
 import { detectSearchIntent } from './searchIntent.js';
 import { rescoreReport } from './relevanceScorer.js';
 import { cleanArticleContent } from './articleCleaner.js';
+import { CHANGELOG, getAppVersion, getLatest, APP_NAME } from './changelog.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig, diagnoseMailError } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
@@ -64,6 +65,8 @@ app.get('/api/health', async (_req, res) => {
   const naverSource = getNaverSource();   // 'env' | 'admin' | 'none'
   res.json({
     ok:              true,
+    appName:         APP_NAME,
+    version:         getAppVersion(),
     time:            new Date().toISOString(),
     smtp:            smtpConfigured(),
     kakao:           isKakaoEnabled(),
@@ -121,6 +124,16 @@ app.get('/api/health', async (_req, res) => {
       reportTime:    cfg.reportTime || process.env.REPORT_TIME || '09:00',
       nextAt:        sch.nextAt,
     },
+  });
+});
+
+// ── 버전 / 변경이력 (무인증 — UpdateNoticeModal 이 첫 접속 시 호출) ────
+app.get('/api/version', (_req, res) => {
+  res.json({
+    appName:   APP_NAME,
+    version:   getAppVersion(),
+    latest:    getLatest(),
+    changelog: CHANGELOG,
   });
 });
 
@@ -1226,7 +1239,7 @@ app.get('/api/reports/:id/clipping/pdf', requireAuth, async (req, res) => {
     const html = decision.fast
       ? renderClippingHtml(report, { includeAppendix: false, fast: true })
       : previewHtml;
-    const buf = await htmlToPdfBudgeted(html, { reportId, mode: decision.fast ? 'fast' : 'default' });
+    const buf = await htmlToPdfBudgeted(html, { appLabel: `${APP_NAME} v${getAppVersion()}`, reportId, mode: decision.fast ? 'fast' : 'default' });
     const dateStr = new Date(report.generatedAt).toISOString().slice(0, 10);
     const fileName = `clipping-${dateStr}${decision.fast ? '-fast' : ''}.pdf`;
     res.set('Content-Type', 'application/pdf');
@@ -1386,7 +1399,7 @@ async function generatePdfFor(id, opts = {}) {
     console.log(`[pdf] image embed: ${stats.succeeded}/${stats.total} succeeded, ${stats.articlesWithImage}/${stats.articleTotal} articles have image`);
   }
   const html = renderReportHtml(report, { fast });
-  const buf  = await htmlToPdfBudgeted(html, { reportId: id, mode: fast ? 'fast' : 'default' });
+  const buf  = await htmlToPdfBudgeted(html, { appLabel: `${APP_NAME} v${getAppVersion()}`, reportId: id, mode: fast ? 'fast' : 'default' });
   const dateStr = new Date(report.generatedAt).toISOString().slice(0, 16).replace(/[-T:]/g, '').slice(0, 12);
   return { buf, fileName: `trend-report-${dateStr}${suffix}${fast ? '-fast' : ''}.pdf`, imageStats: stats, fast, autoFast };
 }

@@ -7,6 +7,7 @@
 
 import sanitizeHtml from 'sanitize-html';
 import { getKoreanFontFaceCss, FONT_STACK_SANS } from './fonts.js';
+import { APP_NAME, getAppVersion } from './changelog.js';
 
 function esc(s = '') {
   return String(s)
@@ -518,7 +519,7 @@ export function renderReportHtml(report, opts = {}) {
         </tr>`).join('')}
     </table>` : ''}
 
-  <div class="footer">법무부 언론보도 모니터링 — 자동 생성 보고서 (내부 업무용 · 외부 공개 금지)</div>
+  <div class="footer">법무부 언론보도 모니터링 — 자동 생성 보고서 (내부 업무용 · 외부 공개 금지) · ${APP_NAME} v${getAppVersion()}</div>
 </div>
 </body></html>`;
 }

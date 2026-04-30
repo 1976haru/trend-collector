@@ -13,6 +13,7 @@ import RecipientSettings from './components/recipients/RecipientSettings.jsx';
 import AdminPanel       from './components/admin/AdminPanel.jsx';
 import Help             from './components/help/Help.jsx';
 import FeedbackModal    from './components/feedback/FeedbackModal.jsx';
+import UpdateNoticeModal from './components/common/UpdateNoticeModal.jsx';
 
 import { useAuth }    from './hooks/useAuth.js';
 import { useConfig }  from './hooks/useConfig.js';
@@ -28,6 +29,7 @@ export default function App() {
   const [detailId, setDetailId] = useState(null);
   const [sending,  setSending]  = useState('');
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [adminInitialTab, setAdminInitialTab] = useState(null);   // UpdateNoticeModal → 변경이력 탭 이동
 
   // 헬스 주기 갱신 (다음 자동수집 시각이 헤더에 표시되므로)
   useEffect(() => {
@@ -157,12 +159,13 @@ export default function App() {
           />
         )}
 
-        {tab === 'admin' && <AdminPanel />}
+        {tab === 'admin' && <AdminPanel initialTab={adminInitialTab} onTabConsumed={() => setAdminInitialTab(null)} />}
 
         {tab === 'help' && <Help />}
       </main>
 
       <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <UpdateNoticeModal onOpenChangelog={() => { setAdminInitialTab('changelog'); setTab('admin'); }} />
     </div>
   );
 }

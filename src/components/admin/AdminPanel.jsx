@@ -10,12 +10,20 @@ import SourceSettings from './SourceSettings.jsx';
 import TestSearch     from './TestSearch.jsx';
 import TrackingLinks  from './TrackingLinks.jsx';
 import ReportMetaSettings from './ReportMetaSettings.jsx';
+import ChangelogTab   from './ChangelogTab.jsx';
 
-export default function AdminPanel() {
+export default function AdminPanel({ initialTab, onTabConsumed }) {
   const [feedback, setFeedback] = useState([]);
   const [unread,   setUnread]   = useState(0);
   const [stats,    setStats]    = useState([]);
-  const [tab,      setTab]      = useState('feedback');
+  const [tab,      setTab]      = useState(initialTab || 'feedback');
+
+  useEffect(() => {
+    if (initialTab) {
+      setTab(initialTab);
+      onTabConsumed && onTabConsumed();
+    }
+  }, [initialTab]);    // eslint-disable-line
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
 
@@ -80,8 +88,12 @@ export default function AdminPanel() {
           style={{ ...S.tab, ...(tab === 'stats' ? S.tabOn : {}) }}>
           📈 추출 실패 도메인 {stats.length > 0 && <span style={S.tabCount}>{stats.length}</span>}
         </button>
+        <button onClick={() => setTab('changelog')}
+          style={{ ...S.tab, ...(tab === 'changelog' ? S.tabOn : {}) }}>
+          📜 변경이력
+        </button>
         <div style={{ flex: 1 }} />
-        {!['mail', 'source', 'search', 'tracking', 'reportMeta'].includes(tab) && (
+        {!['mail', 'source', 'search', 'tracking', 'reportMeta', 'changelog'].includes(tab) && (
           <button onClick={refresh} disabled={loading} style={S.refresh}>
             {loading ? '⏳' : '↻'} 새로고침
           </button>
@@ -93,6 +105,7 @@ export default function AdminPanel() {
       {tab === 'search'     && <TestSearch />}
       {tab === 'tracking'   && <TrackingLinks />}
       {tab === 'reportMeta' && <ReportMetaSettings />}
+      {tab === 'changelog'  && <ChangelogTab />}
 
       {error && <div style={S.err}>⚠️ {error}</div>}
 

@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────
 
 import ExcelJS from 'exceljs';
+import { APP_NAME, getAppVersion } from './changelog.js';
 
 function fmtKST(iso) {
   try { return new Date(iso).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }); } catch { return iso || ''; }
@@ -129,6 +130,7 @@ function addSummarySheet(wb, report, tracking) {
   const total = (report.articles || []).length;
 
   const rows = [
+    ['프로그램',      `${APP_NAME} v${getAppVersion()}`],
     ['보고서 ID',     report.id || ''],
     ['생성 일시',     fmtKST(report.generatedAt)],
     ['수집 기간',     `${fmtDateOnly(report.period?.from)} ~ ${fmtDateOnly(report.period?.to)} (${report.period?.label || '-'})`],

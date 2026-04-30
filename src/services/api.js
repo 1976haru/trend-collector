@@ -32,6 +32,8 @@ export const logout    = ()         => request('POST', '/api/auth/logout');
 
 // 헬스 (무인증)
 export const health    = ()         => request('GET',  '/api/health');
+// 버전 / 변경이력 (무인증)
+export const getVersionInfo = ()    => request('GET',  '/api/version');
 
 // 설정
 export const getConfig = ()         => request('GET',  '/api/config');

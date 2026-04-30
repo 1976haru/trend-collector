@@ -11,6 +11,7 @@ import {
   Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType,
   PageBreak, convertInchesToTwip,
 } from 'docx';
+import { APP_NAME, getAppVersion } from './changelog.js';
 
 // Word docx 폰트 — 클라이언트 OS 의 폰트 매칭에 의존.
 // 한국어 Windows: 맑은 고딕 / macOS: Apple SD Gothic Neo / Linux: Noto Sans CJK KR.
@@ -282,6 +283,7 @@ export async function reportToDocx(report, ctx = {}) {
       ['작성자',     meta.author     || '(자동 생성)'],
       ['보안 등급',  meta.classification || '내부 검토용'],
       ['보고서 ID',  r.id || ''],
+      ['프로그램',   `${APP_NAME} v${getAppVersion()}`],
     ],
     [25, 75],
   ));

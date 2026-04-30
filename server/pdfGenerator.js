@@ -204,7 +204,7 @@ export async function htmlToPdf(html, opts = {}) {
       margin: opts.margin || { top: '18mm', right: '14mm', bottom: '18mm', left: '14mm' },
       displayHeaderFooter: opts.displayHeaderFooter !== false,
       headerTemplate: opts.headerTemplate || `<div style="font-size:9pt; width:100%; padding:0 16mm; color:#888;"><span>법무부 언론보도 모니터링 일일보고</span></div>`,
-      footerTemplate: opts.footerTemplate || `<div style="font-size:9pt; width:100%; padding:0 16mm; color:#888; text-align:center;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>`,
+      footerTemplate: opts.footerTemplate || `<div style="font-size:8.5pt; width:100%; padding:0 16mm; color:#888; display:flex; justify-content:space-between;"><span>${(opts.appLabel || 'Trend Collector v1.0.0')}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`,
       timeout: PDF_TIMEOUT_MS,
     });
     const pdf = await pdfPromise;
