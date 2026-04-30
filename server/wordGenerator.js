@@ -12,6 +12,10 @@ import {
   PageBreak, convertInchesToTwip,
 } from 'docx';
 
+// Word docx 폰트 — 클라이언트 OS 의 폰트 매칭에 의존.
+// 한국어 Windows: 맑은 고딕 / macOS: Apple SD Gothic Neo / Linux: Noto Sans CJK KR.
+// docx 라이브러리는 단일 font name 만 지원하므로 가장 보편적인 '맑은 고딕' 사용.
+// (사용자가 폰트가 없는 환경에서 열면 OS 기본 한글 폰트로 자동 fallback)
 const FONT = 'Malgun Gothic';
 
 function fmtKST(iso) {

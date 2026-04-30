@@ -6,6 +6,8 @@
 // 공공기관 보고 문체: ~임 / ~함 / ~판단됨 / ~필요함.
 // ─────────────────────────────────────────────
 
+import { getKoreanFontFaceCss, FONT_STACK_SANS } from './fonts.js';
+
 function esc(s = '') {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -150,20 +152,18 @@ export function renderAnalysisHtml(report, opts = {}) {
     sum.urgentCount ? `긴급 대응 이슈 ${sum.urgentCount}건이 식별되어 신속한 대응이 요구됨.` : '긴급 대응이 요구되는 이슈는 식별되지 않았음.',
   ].filter(Boolean);
 
-  // fast 모드 — 외부 폰트 제거 (PDF timeout 방어)
-  const fontLink = opts.fast
-    ? ''
-    : `<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet" />`;
+  // 한글 폰트는 base64 inline @font-face 로 임베드 — Render Linux 호환.
+  const fontFaceCss = getKoreanFontFaceCss();
 
   return /* html */ `<!doctype html>
 <html lang="ko"><head>
 <meta charset="utf-8" />
 <title>${esc(titleStr)}</title>
-${fontLink}
 <style>
+  ${fontFaceCss}
   @page { size: A4; margin: 20mm 18mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif; color:#0d1117; line-height:1.7; font-size:10.5pt; }
+  body { font-family: ${FONT_STACK_SANS}; color:#0d1117; line-height:1.7; font-size:10.5pt; }
   h1 { font-size: 18pt; border-bottom: 1.5pt solid #0d1117; padding-bottom: 4pt; margin: 18pt 0 8pt; page-break-after: avoid; }
   h2 { font-size: 13pt; margin: 14pt 0 6pt; page-break-after: avoid; }
   h3 { font-size: 11pt; margin: 10pt 0 4pt; }

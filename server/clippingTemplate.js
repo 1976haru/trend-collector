@@ -7,6 +7,7 @@
 
 import sanitizeHtml from 'sanitize-html';
 import { defaultPrintSettings } from './clippingPresets.js';
+import { getKoreanFontFaceCss, FONT_STACK_SANS, FONT_STACK_SERIF } from './fonts.js';
 
 function esc(s = '') {
   return String(s)
@@ -298,23 +299,21 @@ export function renderClippingHtml(report, opts = {}) {
     ? renderAnalysisAppendix(report)
     : '';
 
-  // fast 모드 — 외부 Google Fonts 의존을 제거 (Render 콜드 스타트 / 네트워크 지연 시 timeout 방지).
-  // 시스템 한글 명조 fallback 으로 충분히 보고서 품질이 유지된다.
-  const fontLink = opts.fast
-    ? ''
-    : `<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;700&family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet" />`;
+  // 한글 폰트는 base64 inline @font-face 로 임베드 — 외부 CDN 의존 X, Render Linux 호환.
+  // fast 모드와 일반 모드 모두 동일하게 임베드한다 (한글 깨짐 방지가 최우선).
+  const fontFaceCss = getKoreanFontFaceCss();
 
   return /* html */ `<!doctype html>
 <html lang="ko"><head>
 <meta charset="utf-8" />
 <title>${esc(settings.title)}</title>
-${fontLink}
 <style>
+  ${fontFaceCss}
   @page { size: A4 portrait; margin: 25mm 22mm; }
   * { box-sizing: border-box; }
   html, body { background: white; }
   body {
-    font-family: 'Nanum Myeongjo','Noto Serif KR','Batang','Malgun Gothic','Apple SD Gothic Neo',serif;
+    font-family: ${FONT_STACK_SERIF};
     color: #000;
     line-height: 1.7;
     font-size: 10.5pt;

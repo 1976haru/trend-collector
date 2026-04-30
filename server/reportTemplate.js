@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────
 
 import sanitizeHtml from 'sanitize-html';
+import { getKoreanFontFaceCss, FONT_STACK_SANS } from './fonts.js';
 
 function esc(s = '') {
   return String(s)
@@ -245,20 +246,18 @@ export function renderReportHtml(report, opts = {}) {
     ? `<span class="riskCaution">⚠️ 주의</span>`
     : `<span class="riskOk">✅ 안정</span>`;
 
-  // fast 모드 — 외부 폰트 제거 (PDF timeout 방어)
-  const fontLink = opts.fast
-    ? ''
-    : `<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet" />`;
+  // 한글 폰트 base64 inline @font-face 임베드 (Render Linux 호환)
+  const fontFaceCss = getKoreanFontFaceCss();
 
   return /* html */ `<!doctype html>
 <html lang="ko"><head>
 <meta charset="utf-8" />
 <title>${esc(title)}</title>
-${fontLink}
 <style>
+  ${fontFaceCss}
   @page { size: A4; margin: 18mm 14mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif; color:#0d1117; line-height:1.6; font-size:10.5pt; }
+  body { font-family: ${FONT_STACK_SANS}; color:#0d1117; line-height:1.6; font-size:10.5pt; }
   h1 { font-size: 22pt; margin: 0 0 4pt; }
   h2 { font-size: 14pt; margin: 16pt 0 6pt; padding-bottom:3pt; border-bottom:1.5pt solid #0d1117; page-break-after: avoid; }
   h3 { font-size: 12pt; margin: 10pt 0 4pt; page-break-after: avoid; }

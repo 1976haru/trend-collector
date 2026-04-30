@@ -141,16 +141,31 @@ export async function htmlToPdf(html, opts = {}) {
     }
     log('selectorReady');
 
-    // ── 3) 폰트 로딩 — 최대 10초 ──
+    // ── 3) 폰트 로딩 — 최대 10초 + 한글 글리프 실제 로드 검증 ──
     lastStep = 'fontsReady';
-    await page.evaluate(async (timeoutMs) => {
-      if (!document.fonts) return;
+    const fontDiag = await page.evaluate(async (timeoutMs) => {
+      if (!document.fonts) return { ready: false, koreanLoaded: false, families: [] };
       await Promise.race([
         document.fonts.ready,
         new Promise(res => setTimeout(res, timeoutMs)),
       ]);
-    }, FONTS_TIMEOUT_MS).catch(() => {});
-    log('fontReady');
+      // 실제 한글 글리프 로드 검증 — '법무부' 가 base64 임베드된 Noto Sans KR 로 그려지는지 확인.
+      // document.fonts.check 가 명시적 family 검증.
+      const sansKoreanLoaded = document.fonts.check('12px "Noto Sans KR"', '법무부 보호관찰 전자감독');
+      const serifKoreanLoaded = document.fonts.check('12px "Noto Serif KR"', '법무부 보호관찰 전자감독');
+      const families = [...document.fonts].map(f => f.family);
+      return {
+        ready:           true,
+        koreanLoaded:    sansKoreanLoaded || serifKoreanLoaded,
+        sansLoaded:      sansKoreanLoaded,
+        serifLoaded:     serifKoreanLoaded,
+        families:        [...new Set(families)],
+      };
+    }, FONTS_TIMEOUT_MS).catch(() => ({ ready: false, koreanLoaded: false }));
+    log('fontReady', `koreanLoaded=${fontDiag.koreanLoaded} sans=${fontDiag.sansLoaded} serif=${fontDiag.serifLoaded}`);
+    if (!fontDiag.koreanLoaded) {
+      console.warn(`${tag} ⚠️ Korean font NOT loaded — PDF 한글 깨짐 위험 (families=${(fontDiag.families || []).join(',')})`);
+    }
 
     // ── 4) 이미지 로딩 — 최대 10초 race, 실패는 graceful ──
     lastStep = 'imagesReady';
