@@ -110,6 +110,26 @@ export async function loadReport(id) {
   return JSON.parse(txt);
 }
 
+// ── 편철 출력 설정 / 기사 수동 편집값 부분 갱신 ──
+// printSettings · articleOverrides 만 갱신해서 저장한다. 기존 데이터는 유지.
+export async function updateReportPart(id, patch = {}) {
+  const r = await loadReport(id);
+  if (patch.printSettings) {
+    r.printSettings = { ...(r.printSettings || {}), ...patch.printSettings };
+  }
+  if (patch.articleOverrides) {
+    r.articleOverrides = { ...(r.articleOverrides || {}), ...patch.articleOverrides };
+  }
+  if (patch.clearArticleOverrideId) {
+    if (r.articleOverrides) delete r.articleOverrides[patch.clearArticleOverrideId];
+  }
+  if (patch.resetArticleOverrides) {
+    r.articleOverrides = {};
+  }
+  await saveReport(r);
+  return r;
+}
+
 // ── 기능개선 제안 영구 저장 ──────────────────
 const FEEDBACK_PATH = () => path.join(DATA_DIR, 'feedback.json');
 

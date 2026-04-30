@@ -569,3 +569,180 @@ function truncate(s, n) {
   s = String(s || '');
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
+
+// ──────────────────────────────────────────────
+// 편철형 Word — 표지 → 언론사별 목차 → 언론사별 본문 → (선택) 분석 부록
+// ──────────────────────────────────────────────
+import { defaultPrintSettings } from './clippingPresets.js';
+import { applyOverride } from './clippingTemplate.js';
+
+function paraCenter(text, opts = {}) {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { before: opts.before ?? 100, after: opts.after ?? 100 },
+    border: opts.box ? {
+      top:    { style: BorderStyle.SINGLE, size: 12, color: '000000' },
+      bottom: { style: BorderStyle.SINGLE, size: 12, color: '000000' },
+      left:   { style: BorderStyle.SINGLE, size: 12, color: '000000' },
+      right:  { style: BorderStyle.SINGLE, size: 12, color: '000000' },
+    } : undefined,
+    children: [new TextRun({
+      text:  String(text ?? ''),
+      font:  opts.font || FONT,
+      size:  opts.size || 24,
+      bold:  !!opts.bold,
+      characterSpacing: opts.spacing,
+    })],
+  });
+}
+
+function articleHeading(media, pageLabel, dateText) {
+  return new Paragraph({
+    spacing: { before: 240, after: 80 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: '000000' } },
+    children: [
+      new TextRun({ text: `${media}  `, font: FONT, size: 22, bold: true }),
+      pageLabel ? new TextRun({ text: `[${pageLabel}]  `, font: FONT, size: 18 }) : new TextRun({ text: '', font: FONT }),
+      dateText ? new TextRun({ text: dateText, font: FONT, size: 18, color: '555555' }) : new TextRun({ text: '', font: FONT }),
+    ],
+  });
+}
+
+function articleTitle(text) {
+  return new Paragraph({
+    spacing: { before: 120, after: 60 },
+    children: [new TextRun({ text: String(text || '제목 없음'), font: 'Batang', size: 32, bold: true })],
+  });
+}
+
+function articleBodyParagraph(text) {
+  return new Paragraph({
+    spacing: { before: 60, after: 60, line: 320 },
+    indent:  { firstLine: 240 },
+    alignment: AlignmentType.BOTH,
+    children: [new TextRun({ text: String(text), font: 'Batang', size: 22 })],
+  });
+}
+
+function tocLine(media, pageLabel, title, page) {
+  // 언론사명 │ 지면 │ 제목 ......... 페이지
+  return new Paragraph({
+    spacing: { before: 30, after: 30 },
+    children: [
+      new TextRun({ text: media.padEnd(8, ' '), font: FONT, size: 20, bold: true }),
+      new TextRun({ text: `  ${pageLabel || '-'}   `, font: FONT, size: 18, color: '555555' }),
+      new TextRun({ text: String(title), font: FONT, size: 20 }),
+      new TextRun({ text: ' ' + '·'.repeat(20) + ' ', font: FONT, size: 18, color: '888888' }),
+      new TextRun({ text: String(page), font: FONT, size: 20, bold: true }),
+    ],
+  });
+}
+
+export async function clippingToDocx(report, ctx = {}) {
+  const settings = { ...defaultPrintSettings(report), ...(report.printSettings || {}), ...(ctx.settings || {}) };
+  const overrides = report.articleOverrides || {};
+  const list = (report.articles || []).map(a => applyOverride(a, overrides)).filter(a => a._include);
+
+  // 언론사별 그룹
+  const byMedia = new Map();
+  for (const a of list) {
+    const k = a.source || '미상';
+    if (!byMedia.has(k)) byMedia.set(k, []);
+    byMedia.get(k).push(a);
+  }
+  const groups = [...byMedia.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ko'));
+
+  // 페이지 추정 (대략)
+  const pageMap = new Map();
+  let pn = 3;
+  for (const [, arts] of groups) {
+    for (const a of arts) {
+      pageMap.set(a.id, pn);
+      pn += settings.pageLayout === 'article' ? 1 : settings.pageLayout === 'compact' ? (1 / 3) : (1 / 2);
+    }
+    pn = Math.ceil(pn);
+  }
+
+  const children = [];
+
+  // 표지 ────────────────────────────────────
+  children.push(paraCenter(' ', { size: 14, before: 600 }));
+  children.push(paraCenter(settings.title, { size: 30, bold: true, spacing: 120, before: 120, after: 600, box: true }));
+  children.push(paraCenter(' ', { before: 400 }));
+  children.push(paraCenter(`${settings.dateText || ''}${settings.issueLabel ? ' ' + settings.issueLabel : ''}`, { size: 26, before: 200 }));
+  children.push(paraCenter(' ', { before: 300 }));
+  children.push(paraCenter(settings.mainBoxTitle, { size: 60, bold: true, spacing: 240, box: true, before: 300, after: 100 }));
+  if (settings.mainBoxSub)  children.push(paraCenter(settings.mainBoxSub, { size: 28 }));
+  if (settings.extraTag1)   children.push(paraCenter(settings.extraTag1, { size: 26 }));
+  if (settings.extraTag2)   children.push(paraCenter(settings.extraTag2, { size: 26 }));
+  children.push(paraCenter(' ', { before: 800 }));
+  children.push(paraCenter(settings.organization, { size: 28, bold: true, before: 600 }));
+  children.push(pageBreak());
+
+  // 목차 ────────────────────────────────────
+  children.push(H1('언론사별 목차'));
+  for (const [media, arts] of groups) {
+    children.push(P(media, { bold: true, size: 24, before: 160, after: 60 }));
+    for (const a of arts) {
+      children.push(tocLine(media, a.pageLabel || (a.url ? '온라인' : '-'), a.title || '제목 없음', pageMap.get(a.id) || '-'));
+    }
+  }
+  children.push(pageBreak());
+
+  // 기사 ────────────────────────────────────
+  for (const [media, arts] of groups) {
+    children.push(H1(`■ ${media}`));
+    arts.forEach((a, idx) => {
+      children.push(articleHeading(media, a.pageLabel, a.publishedAt || a.date || ''));
+      children.push(articleTitle(a.title));
+      if (a.subtitle) children.push(P(a.subtitle, { size: 22, color: '333333' }));
+      const paragraphs = String(a.contentText || '')
+        .split(/\n+/).map(s => s.trim()).filter(Boolean);
+      if (paragraphs.length) {
+        paragraphs.forEach(p => children.push(articleBodyParagraph(p)));
+      } else {
+        children.push(P('⚠️ 본문 자동 추출 실패 — 원문 링크에서 직접 확인하세요.', { size: 20, color: '999999' }));
+      }
+      if (a.author) children.push(P(`— ${a.author}`, { size: 20, color: '555555', align: AlignmentType.RIGHT }));
+      if (settings.showSourceLink && a.url) children.push(P(`원문: ${a.url}`, { size: 18, color: '666666' }));
+
+      // 페이지 분할
+      const breakHere = settings.pageLayout === 'article'
+                     || (settings.pageLayout === 'compact' && (idx + 1) % 3 === 0)
+                     || (settings.pageLayout === 'media'   && (idx + 1) % 2 === 0);
+      if (breakHere && idx < arts.length - 1) children.push(pageBreak());
+    });
+    children.push(pageBreak()); // 다른 언론사로 넘어가면 새 페이지
+  }
+
+  // 분석 부록 (선택) ─────────────────────────
+  if (settings.includeAnalysisAppendix !== false) {
+    children.push(H1('분석 부록'));
+    const sent = report.sentiment || {};
+    children.push(P(`긍정 ${sent.positive || 0}건 / 부정 ${sent.negative || 0}건 / 중립 ${sent.neutral || 0}건 — ${sent.overall || '중립'}`, { size: 22 }));
+    if ((report.negativeIssues || []).length) {
+      children.push(H2(`부정 이슈 (${report.negativeIssues.length})`));
+      report.negativeIssues.forEach(a => children.push(dashItem(`${truncate(a.title, 80)} [${a.source || ''}]`)));
+    }
+    if ((report.actionRequired || []).length) {
+      children.push(H2(`대응 필요 기사 (${report.actionRequired.length})`));
+      report.actionRequired.forEach(a => children.push(dashItem(`[${a.priority || '참고'}] ${truncate(a.title, 80)} [${a.source || ''}]`)));
+    }
+  }
+
+  const doc = new Document({
+    creator: 'Trend Collector',
+    title:   settings.title || '언론 스크랩철',
+    styles: { default: { document: { run: { font: FONT, size: 22 } } } },
+    sections: [{
+      properties: { page: { margin: { top: convertInchesToTwip(1), right: convertInchesToTwip(0.9), bottom: convertInchesToTwip(1), left: convertInchesToTwip(0.9) } } },
+      children,
+    }],
+  });
+  return Packer.toBuffer(doc);
+}
+
+// 분석형 Word — 기존 reportToDocx 가 이미 분석형 문체이므로 alias 로 노출.
+export async function analysisToDocx(report, ctx = {}) {
+  return reportToDocx(report, ctx);
+}

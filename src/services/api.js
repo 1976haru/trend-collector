@@ -209,3 +209,63 @@ export async function downloadReportExcel(id) {
   await triggerDownload(blob, filename);
   return { filename, size: blob.size };
 }
+
+// ── 편철형 / 분석형 출력 — URL ───────────────────
+export const clippingPreviewUrl = (id, q='')   => `/api/reports/${encodeURIComponent(id)}/clipping/preview${q}`;
+export const clippingPdfUrl     = (id, q='')   => `/api/reports/${encodeURIComponent(id)}/clipping/pdf${q}`;
+export const clippingWordUrl    = (id)         => `/api/reports/${encodeURIComponent(id)}/clipping/word`;
+export const clippingHtmlUrl    = (id)         => `/api/reports/${encodeURIComponent(id)}/clipping/html`;
+export const analysisPreviewUrl = (id)         => `/api/reports/${encodeURIComponent(id)}/analysis/preview`;
+export const analysisWordUrl    = (id)         => `/api/reports/${encodeURIComponent(id)}/analysis/word`;
+export const analysisExcelUrl   = (id)         => `/api/reports/${encodeURIComponent(id)}/analysis/excel`;
+export const analysisHtmlUrl    = (id)         => `/api/reports/${encodeURIComponent(id)}/analysis/html`;
+
+// ── 편철형 다운로드 ──────────────────────────
+export async function downloadClippingPdf(id, opts = {}) {
+  const q = opts.includeAppendix === false ? '?appendix=0' : '';
+  const { blob, filename } = await fetchPdfBlob(clippingPdfUrl(id, q));
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+export async function previewClippingPdf(id) {
+  const w = window.open(clippingPreviewUrl(id), '_blank');
+  if (!w) throw new Error('팝업 차단 — 미리보기 창을 열 수 없습니다. 팝업을 허용하세요.');
+}
+export async function downloadClippingWord(id) {
+  const { blob, filename } = await fetchFileBlob(clippingWordUrl(id), 'wordprocessingml');
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+export async function downloadClippingHtml(id) {
+  const { blob, filename } = await fetchFileBlob(clippingHtmlUrl(id), 'text/html');
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+
+// ── 분석형 다운로드 ──────────────────────────
+export async function downloadAnalysisWord(id) {
+  const { blob, filename } = await fetchFileBlob(analysisWordUrl(id), 'wordprocessingml');
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+export async function downloadAnalysisExcel(id) {
+  const { blob, filename } = await fetchFileBlob(analysisExcelUrl(id), 'spreadsheetml');
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+export async function downloadAnalysisHtml(id) {
+  const { blob, filename } = await fetchFileBlob(analysisHtmlUrl(id), 'text/html');
+  await triggerDownload(blob, filename);
+  return { filename, size: blob.size };
+}
+export function previewAnalysisHtml(id) {
+  const w = window.open(analysisPreviewUrl(id), '_blank');
+  if (!w) throw new Error('팝업 차단 — 분석 보고서 미리보기를 열 수 없습니다.');
+}
+
+// ── 편철 설정 / 기사 편집 ──────────────────────
+export const getPrintSettings  = (id)        => request('GET', `/api/reports/${encodeURIComponent(id)}/print-settings`);
+export const savePrintSettings = (id, body)  => request('PUT', `/api/reports/${encodeURIComponent(id)}/print-settings`, body);
+export const saveArticleOverrides = (id, body) => request('PUT', `/api/reports/${encodeURIComponent(id)}/article-overrides`, body);
+export const getQualityCheck   = (id)        => request('GET', `/api/reports/${encodeURIComponent(id)}/quality-check`);
+export const listClippingPresets = ()        => request('GET', `/api/clipping/presets`);

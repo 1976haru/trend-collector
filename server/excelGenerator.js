@@ -263,6 +263,83 @@ function addDeptResponseSheet(wb, report) {
   autoFitColumns(ws);
 }
 
+// ── 언론사별 목차 시트 ───────────────────────
+function addMediaTocSheet(wb, report) {
+  const ws = wb.addWorksheet('언론사별목차');
+  ws.columns = [
+    { header: '언론사',  key: 'media',  width: 18 },
+    { header: '지면',    key: 'page',   width: 12 },
+    { header: '제목',    key: 'title',  width: 70 },
+    { header: '날짜',    key: 'date',   width: 16 },
+    { header: '링크',    key: 'url',    width: 50 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  const overrides = report.articleOverrides || {};
+  const rows = (report.articles || []).map(a => {
+    const o = overrides[a.id] || {};
+    return {
+      a, o,
+      media: o.source ?? a.source ?? '미상',
+      page:  o.pageLabel ?? a.pageLabel ?? (a.url ? '온라인' : '-'),
+      title: o.title ?? a.title ?? '',
+      date:  o.publishedAt ?? a.date ?? '',
+      url:   a.url || '',
+      include: o.includeInClipping !== false,
+    };
+  }).filter(r => r.include);
+  rows.sort((x, y) => {
+    const m = (x.media || '').localeCompare(y.media || '', 'ko');
+    if (m !== 0) return m;
+    return String(x.date).localeCompare(String(y.date));
+  });
+  for (const r of rows) {
+    const row = ws.addRow({ media: r.media, page: r.page, title: r.title, date: r.date, url: r.url });
+    if (r.url) {
+      row.getCell('url').value = { text: r.url, hyperlink: r.url };
+      row.getCell('url').font = { color: { argb: 'FF2563EB' }, underline: true, name: 'Malgun Gothic' };
+    }
+  }
+  if (!rows.length) ws.addRow({ media: '—', page: '', title: '편철 대상 기사 없음', date: '', url: '' });
+  autoFitColumns(ws);
+}
+
+// ── 기사 편집용 시트 (출력 여부/순서/언론사/지면 등) ──
+function addArticleEditSheet(wb, report) {
+  const ws = wb.addWorksheet('기사편집용');
+  ws.columns = [
+    { header: '출력여부', key: 'inc',  width: 10 },
+    { header: '순서',     key: 'order', width: 8 },
+    { header: '언론사',   key: 'media', width: 16 },
+    { header: '지면',     key: 'page',  width: 10 },
+    { header: '제목',     key: 'title', width: 70 },
+    { header: '분류',     key: 'cat',   width: 12 },
+    { header: '감정',     key: 'sent',  width: 10 },
+    { header: '관련부서', key: 'dept',  width: 24 },
+    { header: '링크',     key: 'url',   width: 50 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  const overrides = report.articleOverrides || {};
+  (report.articles || []).forEach((a, i) => {
+    const o = overrides[a.id] || {};
+    const row = ws.addRow({
+      inc:   o.includeInClipping !== false ? 'Y' : 'N',
+      order: Number.isFinite(o.printOrder) ? o.printOrder : i + 1,
+      media: o.source ?? a.source ?? '',
+      page:  o.pageLabel ?? a.pageLabel ?? '',
+      title: o.title ?? a.title ?? '',
+      cat:   o.category ?? a.mediaType ?? '',
+      sent:  a.sentiment?.label || '',
+      dept:  (a.departments || []).map(d => d.name).join(', '),
+      url:   a.url || '',
+    });
+    if (a.url) {
+      row.getCell('url').value = { text: a.url, hyperlink: a.url };
+      row.getCell('url').font = { color: { argb: 'FF2563EB' }, underline: true, name: 'Malgun Gothic' };
+    }
+  });
+  autoFitColumns(ws);
+}
+
 // ── 메인 ───────────────────────────────────
 export async function reportToXlsx(report, ctx = {}) {
   const tracking = ctx.tracking || { totalLinks: 0, totalClicks: 0, items: [] };
@@ -275,11 +352,13 @@ export async function reportToXlsx(report, ctx = {}) {
 
   const articles = report.articles || [];
   addArticleSheet(wb, '2.전체기사', articles);
-  addArticleSheet(wb, '3.기관배포자료', articles.filter(a => a.articleSource === 'agency'));
+  addMediaTocSheet(wb, report);
+  addArticleSheet(wb, '4.기관배포자료', articles.filter(a => a.articleSource === 'agency'));
   addReCitationSheet(wb, report);
   addClickSheet(wb, tracking);
-  addArticleSheet(wb, '6.부정이슈', articles.filter(a => a.sentiment?.label === '부정'));
+  addArticleSheet(wb, '7.부정이슈', articles.filter(a => a.sentiment?.label === '부정'));
   addDeptResponseSheet(wb, report);
+  addArticleEditSheet(wb, report);
 
   return wb.xlsx.writeBuffer().then(b => Buffer.from(b));
 }

@@ -9,14 +9,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import authRouter, { requireAuth } from './auth.js';
-import { loadConfig, saveConfig, listReports, loadReport, saveReport, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
+import { loadConfig, saveConfig, listReports, loadReport, saveReport, updateReportPart, appendFeedback, listFeedback, setFeedbackRead, loadMailSettings, saveMailSettings, safeMailSettings, loadSourceSettings, saveSourceSettings, safeSourceSettings,
   listTrackingLinks, getTrackingLink, createTrackingLink, updateTrackingLink, deleteTrackingLink, recordTrackingClick } from './store.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
+import { renderClippingHtml, buildQualityReport } from './clippingTemplate.js';
+import { renderAnalysisHtml } from './analysisTemplate.js';
+import { PRESET_LIST, getPreset, defaultPrintSettings } from './clippingPresets.js';
 import { startScheduler, restartScheduler, getStatus as getSchedulerStatus } from './scheduler.js';
 import { htmlToPdf, shutdownBrowser } from './pdfGenerator.js';
-import { reportToDocx } from './wordGenerator.js';
+import { reportToDocx, clippingToDocx, analysisToDocx } from './wordGenerator.js';
 import { reportToXlsx } from './excelGenerator.js';
 import { embedImagesInReport } from './imageCache.js';
 import { isKakaoEnabled } from './notifyKakao.js';
@@ -637,7 +640,225 @@ api.post('/reports/:id/email', async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────
+// 편철 / 분석 — 출력 설정 · 기사 편집 · 프리셋
+// ──────────────────────────────────────────────
+
+// 프리셋 목록
+api.get('/clipping/presets', (_req, res) => {
+  res.json({ presets: PRESET_LIST.map(p => ({ id: p.id, label: p.label, settings: p.settings })) });
+});
+
+// 출력 설정 조회 — 저장 안 됐으면 기본값 + 프리셋 반환
+api.get('/reports/:id/print-settings', async (req, res) => {
+  try {
+    const r = await loadReport(req.params.id);
+    res.json({
+      printSettings: { ...defaultPrintSettings(r), ...(r.printSettings || {}) },
+      presets: PRESET_LIST.map(p => ({ id: p.id, label: p.label })),
+    });
+  } catch { res.status(404).json({ error: 'not found' }); }
+});
+
+// 출력 설정 저장 (부분 갱신)
+api.put('/reports/:id/print-settings', async (req, res) => {
+  try {
+    const allowed = ['presetId', 'title', 'dateText', 'issueLabel', 'mainBoxTitle', 'mainBoxSub',
+      'extraTag1', 'extraTag2', 'organization', 'sortBy', 'pageLayout', 'columnCount', 'imageMode',
+      'showSourceLink', 'includeAnalysisAppendix', 'printOptimized'];
+    const patch = {};
+    for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    // 프리셋 적용 옵션
+    if (patch.presetId) {
+      const preset = getPreset(patch.presetId);
+      if (preset && req.body.applyPreset) {
+        Object.assign(patch, preset.settings, patch); // 프리셋 + 사용자 입력
+      }
+    }
+    const r = await updateReportPart(req.params.id, { printSettings: patch });
+    res.json({ ok: true, printSettings: r.printSettings });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 기사 수동 편집값 — 한 건 또는 여러 건 (object map)
+api.put('/reports/:id/article-overrides', async (req, res) => {
+  try {
+    const map = {};
+    const allowed = ['title', 'subtitle', 'source', 'pageLabel', 'author', 'publishedAt',
+                     'category', 'contentText', 'leadImage', 'includeInClipping', 'printOrder'];
+    const incoming = req.body?.overrides || {};
+    for (const [aid, patch] of Object.entries(incoming)) {
+      const clean = {};
+      for (const k of allowed) if (k in (patch || {})) clean[k] = patch[k];
+      if (Number.isFinite(Number(clean.printOrder))) clean.printOrder = Number(clean.printOrder);
+      map[aid] = clean;
+    }
+    const opts = { articleOverrides: map };
+    if (req.body?.reset) opts.resetArticleOverrides = true;
+    if (req.body?.clearArticleId) opts.clearArticleOverrideId = req.body.clearArticleId;
+    const r = await updateReportPart(req.params.id, opts);
+    res.json({ ok: true, articleOverrides: r.articleOverrides || {} });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 출력 전 품질 점검
+api.get('/reports/:id/quality-check', async (req, res) => {
+  try {
+    const r = await loadReport(req.params.id);
+    res.json(buildQualityReport(r));
+  } catch { res.status(404).json({ error: 'not found' }); }
+});
+
 app.use('/api', api);
+
+// ──────────────────────────────────────────────
+// 편철형 출력물 — HTML / PDF / Word 다운로드 + 미리보기
+// ──────────────────────────────────────────────
+async function buildClippingHtml(id, query = {}) {
+  const r = await loadReport(id);
+  const includeAppendix = query.appendix === '1' ? true : query.appendix === '0' ? false : undefined;
+  return renderClippingHtml(r, { includeAppendix });
+}
+
+app.get('/api/reports/:id/clipping/preview', requireAuth, async (req, res) => {
+  try {
+    const html = await buildClippingHtml(req.params.id, req.query);
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) { res.status(500).type('text/html').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`); }
+});
+
+app.get('/api/reports/:id/clipping/html', requireAuth, async (req, res) => {
+  try {
+    const html = await buildClippingHtml(req.params.id, req.query);
+    const r = await loadReport(req.params.id);
+    const dateStr = new Date(r.generatedAt).toISOString().slice(0, 10);
+    const fileName = `clipping-${dateStr}.html`;
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control', 'no-store');
+    res.send(html);
+  } catch (e) { res.status(500).type('text/html').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`); }
+});
+
+app.get('/api/reports/:id/clipping/pdf', requireAuth, async (req, res) => {
+  try {
+    const html = await buildClippingHtml(req.params.id, req.query);
+    const buf = await htmlToPdf(html);
+    const r = await loadReport(req.params.id);
+    const dateStr = new Date(r.generatedAt).toISOString().slice(0, 10);
+    const fileName = `clipping-${dateStr}.pdf`;
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `${req.query.preview ? 'inline' : 'attachment'}; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (e) {
+    console.error('[clipping:pdf] error:', e.stack || e.message);
+    const status = e.code === 'CHROME_NOT_FOUND' ? 503 : 500;
+    res.status(status).type('text/html; charset=utf-8').send(`<pre style="font-family:'Noto Sans KR'; padding:20px; color:#c53030;">편철 PDF 생성 실패\n\n${(e.message || '').replace(/</g, '&lt;')}</pre>`);
+  }
+});
+
+app.get('/api/reports/:id/clipping/word', requireAuth, async (req, res) => {
+  try {
+    const r = await loadReport(req.params.id);
+    const buf = await clippingToDocx(r);
+    const dateStr = new Date(r.generatedAt).toISOString().slice(0, 10);
+    const fileName = `clipping-${dateStr}.docx`;
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (e) {
+    console.error('[clipping:word] error:', e.stack || e.message);
+    res.status(500).type('text/html').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`);
+  }
+});
+
+// ──────────────────────────────────────────────
+// 분석형 보고서 — HTML / Word / Excel
+// ──────────────────────────────────────────────
+async function buildAnalysisHtml(id) {
+  const r = await loadReport(id);
+  const cfg = await loadConfig();
+  const tlinks = await listTrackingLinks();
+  const tracking = {
+    totalLinks: tlinks.length,
+    totalClicks: tlinks.reduce((s, l) => s + (l.clickCount || 0), 0),
+    items: tlinks,
+  };
+  return renderAnalysisHtml({ ...r, reportMeta: cfg.reportMeta }, { reportMeta: cfg.reportMeta, tracking });
+}
+
+app.get('/api/reports/:id/analysis/preview', requireAuth, async (req, res) => {
+  try {
+    const html = await buildAnalysisHtml(req.params.id);
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) { res.status(500).type('text/html').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`); }
+});
+
+app.get('/api/reports/:id/analysis/html', requireAuth, async (req, res) => {
+  try {
+    const html = await buildAnalysisHtml(req.params.id);
+    const r = await loadReport(req.params.id);
+    const dateStr = new Date(r.generatedAt).toISOString().slice(0, 10);
+    const fileName = `analysis-${dateStr}.html`;
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control', 'no-store');
+    res.send(html);
+  } catch (e) { res.status(500).type('text/html').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`); }
+});
+
+app.get('/api/reports/:id/analysis/word', requireAuth, async (req, res) => {
+  try {
+    const r = await loadReport(req.params.id);
+    const cfg = await loadConfig();
+    const tlinks = await listTrackingLinks();
+    const trackingTotals = {
+      totalLinks:  tlinks.length,
+      totalClicks: tlinks.reduce((s, l) => s + (l.clickCount || 0), 0),
+      items: tlinks,
+    };
+    const buf = await analysisToDocx(r, { reportMeta: cfg.reportMeta, trackingTotals });
+    const dateStr = new Date(r.generatedAt).toISOString().slice(0, 10);
+    const fileName = `analysis-${dateStr}.docx`;
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (e) {
+    console.error('[analysis:word] error:', e.stack || e.message);
+    res.status(500).type('text/html').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`);
+  }
+});
+
+app.get('/api/reports/:id/analysis/excel', requireAuth, async (req, res) => {
+  try {
+    const r = await loadReport(req.params.id);
+    const tlinks = await listTrackingLinks();
+    const tracking = {
+      totalLinks:  tlinks.length,
+      totalClicks: tlinks.reduce((s, l) => s + (l.clickCount || 0), 0),
+      items: tlinks,
+    };
+    const buf = await reportToXlsx(r, { tracking });
+    const dateStr = new Date(r.generatedAt).toISOString().slice(0, 10);
+    const fileName = `analysis-${dateStr}.xlsx`;
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (e) {
+    console.error('[analysis:excel] error:', e.stack || e.message);
+    res.status(500).type('text/html').send(`<pre>${(e.message || '').replace(/</g, '&lt;')}</pre>`);
+  }
+});
 
 // ── 리포트 HTML 보기 (인쇄·PDF 저장용) ──────
 app.get('/api/reports/:id/html', requireAuth, async (req, res) => {

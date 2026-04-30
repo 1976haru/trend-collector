@@ -9,9 +9,10 @@ import {
   downloadReportPdf, previewReportPdf, reportHtmlDebugUrl,
   reextractReport, reextractArticle, downloadNegativePdf,
   downloadReportWord, downloadReportHtml, downloadReportExcel,
-  listTrackingLinks,
+  listTrackingLinks, saveArticleOverrides,
 } from '../../services/api.js';
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
+import ClippingPanel from './ClippingPanel.jsx';
 
 function safeUrl(u = '') {
   const s = String(u).trim();
@@ -61,12 +62,37 @@ function PriorityBadge({ p }) {
   return <span style={{ ...S.prio, background: v.bg, color: v.fg }}>{v.icon} {p}</span>;
 }
 
-function ArticleItem({ idx, art, viewMode = 'paper', onReextract }) {
+function ArticleItem({ idx, art, viewMode = 'paper', onReextract, onEditOverride, override }) {
   const [busyOne, setBusyOne] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [draft, setDraft] = useState(() => ({
+    title:        override?.title ?? '',
+    source:       override?.source ?? '',
+    pageLabel:    override?.pageLabel ?? '',
+    printOrder:   override?.printOrder ?? '',
+    includeInClipping: override?.includeInClipping !== false,
+  }));
   async function handleOneReextract() {
     if (!onReextract) return;
     setBusyOne(true);
     try { await onReextract(art.id); } finally { setBusyOne(false); }
+  }
+  async function handleSaveOverride() {
+    if (!onEditOverride) return;
+    const patch = {};
+    if (draft.title.trim())     patch.title = draft.title.trim();
+    if (draft.source.trim())    patch.source = draft.source.trim();
+    if (draft.pageLabel.trim()) patch.pageLabel = draft.pageLabel.trim();
+    if (draft.printOrder !== '' && Number.isFinite(Number(draft.printOrder))) patch.printOrder = Number(draft.printOrder);
+    patch.includeInClipping = !!draft.includeInClipping;
+    await onEditOverride(art.id, patch);
+    setEditMode(false);
+  }
+  async function handleResetOverride() {
+    if (!onEditOverride) return;
+    await onEditOverride(art.id, null); // 호출 측에서 reset 처리
+    setDraft({ title: '', source: '', pageLabel: '', printOrder: '', includeInClipping: true });
+    setEditMode(false);
   }
   const [open, setOpen] = useState(viewMode === 'paper');     // 원문형은 기본 펼침
   const sentColor = art.sentiment?.label === '긍정' ? '#16a34a'
@@ -151,7 +177,39 @@ function ArticleItem({ idx, art, viewMode = 'paper', onReextract }) {
             {busyOne ? '⏳ 재추출…' : '🔄 이 기사 재추출'}
           </button>
         )}
+        {onEditOverride && (
+          <button style={S.editBtn} onClick={() => setEditMode(m => !m)}>
+            {editMode ? '✕ 편철 편집 취소' : (override ? '✏️ 편철 편집 (수정됨)' : '✏️ 편철 편집')}
+          </button>
+        )}
       </div>
+
+      {editMode && (
+        <div style={S.editBox}>
+          <div style={S.editGrid}>
+            <label style={S.editLbl}>제목 (override)
+              <input style={S.editInp} value={draft.title} placeholder={art.title || ''} onChange={e => setDraft(d => ({ ...d, title: e.target.value }))} />
+            </label>
+            <label style={S.editLbl}>언론사
+              <input style={S.editInp} value={draft.source} placeholder={art.source || ''} onChange={e => setDraft(d => ({ ...d, source: e.target.value }))} />
+            </label>
+            <label style={S.editLbl}>지면/구분
+              <input style={S.editInp} value={draft.pageLabel} placeholder={art.pageLabel || (art.url ? '온라인' : '-')} onChange={e => setDraft(d => ({ ...d, pageLabel: e.target.value }))} />
+            </label>
+            <label style={S.editLbl}>출력 순서 (숫자)
+              <input style={S.editInp} value={draft.printOrder} placeholder="예: 1" onChange={e => setDraft(d => ({ ...d, printOrder: e.target.value }))} />
+            </label>
+          </div>
+          <label style={S.chkInline}>
+            <input type="checkbox" checked={draft.includeInClipping} onChange={e => setDraft(d => ({ ...d, includeInClipping: e.target.checked }))} />
+            <span>편철에 포함 (체크 해제 시 출력 제외)</span>
+          </label>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <button style={S.saveOverrideBtn} onClick={handleSaveOverride}>💾 저장</button>
+            <button style={S.resetOverrideBtn} onClick={handleResetOverride}>↺ 원래 값으로</button>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div style={S.body}>
@@ -481,32 +539,42 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
   return (
     <div style={S.wrap}>
-      {/* 액션 바 — 다운로드 옵션 4종 + 메일 */}
+      {/* 액션 바 — 메일 + 부정만 + 구버전(레거시) 다운로드 */}
       <div style={S.actBar}>
         <button onClick={onClose} style={S.back}>← 목록</button>
         <div style={S.spacer} />
-        <button onClick={onPreview} disabled={!!pdfBusy} style={S.linkBtn} title="브라우저에서 PDF 열기">
-          {pdfBusy === 'preview' ? '⏳' : '🔍 PDF 미리보기'}
-        </button>
-        <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn} title="PDF 다운로드">
-          {pdfBusy === 'download' ? '⏳' : '📄 PDF'}
-        </button>
-        <button onClick={onDownloadWord} disabled={!!pdfBusy} style={S.wordBtn} title="제출용 Word(.docx) — 기관 보고 양식">
-          {pdfBusy === 'word' ? '⏳' : '📝 제출용 Word'}
-        </button>
-        <button onClick={onDownloadHtml} disabled={!!pdfBusy} style={S.htmlBtn} title="HTML 다운로드 — 브라우저로 열고 Ctrl+P">
-          {pdfBusy === 'html' ? '⏳' : '🌐 HTML'}
-        </button>
-        <button onClick={onDownloadExcel} disabled={!!pdfBusy} style={S.excelBtn} title="Excel 다운로드 — 홍보 실적 / 기관별 집계">
-          {pdfBusy === 'excel' ? '⏳' : '📊 Excel'}
-        </button>
-        <button onClick={onDownloadNegative} disabled={!!pdfBusy} style={S.negPdfBtn} title="부정 이슈만 PDF">
-          {pdfBusy === 'negative' ? '⏳' : '🚨 부정'}
+        <button onClick={onDownloadNegative} disabled={!!pdfBusy} style={S.negPdfBtn} title="부정 이슈만 PDF (긴급 보고용)">
+          {pdfBusy === 'negative' ? '⏳' : '🚨 부정 이슈만 PDF'}
         </button>
         <button onClick={() => onEmail(report.id)} style={S.mail} disabled={sending}>
           {sending ? '발송 중…' : '✉️ 메일'}
         </button>
       </div>
+
+      {/* ── 편철형 / 분석형 출력 분리 패널 ── */}
+      <ClippingPanel reportId={report.id} />
+
+      {/* 레거시(통합) 다운로드 — 호환용 */}
+      <details style={S.legacy}>
+        <summary style={S.legacySum}>↩ 통합형(레거시) 다운로드 보기</summary>
+        <div style={S.legacyRow}>
+          <button onClick={onPreview} disabled={!!pdfBusy} style={S.linkBtn}>
+            {pdfBusy === 'preview' ? '⏳' : '🔍 통합 PDF 미리보기'}
+          </button>
+          <button onClick={onDownload} disabled={!!pdfBusy} style={S.pdfBtn}>
+            {pdfBusy === 'download' ? '⏳' : '📄 통합 PDF'}
+          </button>
+          <button onClick={onDownloadWord} disabled={!!pdfBusy} style={S.wordBtn}>
+            {pdfBusy === 'word' ? '⏳' : '📝 통합 Word'}
+          </button>
+          <button onClick={onDownloadHtml} disabled={!!pdfBusy} style={S.htmlBtn}>
+            {pdfBusy === 'html' ? '⏳' : '🌐 통합 HTML'}
+          </button>
+          <button onClick={onDownloadExcel} disabled={!!pdfBusy} style={S.excelBtn}>
+            {pdfBusy === 'excel' ? '⏳' : '📊 통합 Excel'}
+          </button>
+        </div>
+      </details>
 
       {/* PDF 품질 + 재추출 액션 */}
       <div style={S.qualityBar}>
@@ -920,7 +988,7 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
       {/* 기사 목록 + 본문 토글 */}
       <div style={S.panel}>
-        <div style={S.panelLabel}>📌 기사 전체 ({a.length}건) — 본문 펼치기 가능</div>
+        <div style={S.panelLabel}>📌 기사 전체 ({a.length}건) — 본문 펼치기 / 편철 편집 가능</div>
         <ol style={S.list}>
           {a.map((art, i) => (
             <ArticleItem
@@ -928,6 +996,26 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
               idx={i + 1}
               art={art}
               viewMode={viewMode}
+              override={(report.articleOverrides || {})[art.id]}
+              onEditOverride={async (articleId, patch) => {
+                try {
+                  if (patch === null) {
+                    await saveArticleOverrides(report.id, { clearArticleId: articleId });
+                  } else {
+                    await saveArticleOverrides(report.id, { overrides: { [articleId]: patch } });
+                  }
+                  // 캐시된 report 의 articleOverrides 만 갱신
+                  if (onReportRefresh) {
+                    const next = {
+                      ...report,
+                      articleOverrides: patch === null
+                        ? Object.fromEntries(Object.entries(report.articleOverrides || {}).filter(([k]) => k !== articleId))
+                        : { ...(report.articleOverrides || {}), [articleId]: patch },
+                    };
+                    onReportRefresh(next);
+                  }
+                } catch (e) { setPdfError(e.message); }
+              }}
               onReextract={async (articleId) => {
                 try {
                   const r = await reextractArticle(report.id, articleId);
@@ -1095,6 +1183,19 @@ const S = {
   reextOne:      { padding: '6px 11px', minHeight: 32, borderRadius: 7, border: 'none',
                    background: '#f59e0b', color: 'white', fontSize: 12, fontWeight: 600,
                    cursor: 'pointer', fontFamily: 'inherit' },
+
+  editBtn:        { padding: '6px 11px', minHeight: 32, borderRadius: 7, border: '1.5px solid #d5d0c8', background: 'white', color: '#0d1117', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  editBox:        { marginTop: 9, background: '#f8f6f2', border: '1px solid #d5d0c8', borderRadius: 8, padding: '10px 12px' },
+  editGrid:       { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 6 },
+  editLbl:        { display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: '#666', fontWeight: 600 },
+  editInp:        { padding: '7px 9px', border: '1.5px solid #d5d0c8', borderRadius: 6, fontSize: 12.5, fontFamily: 'inherit', background: 'white' },
+  chkInline:      { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#444', cursor: 'pointer', marginTop: 4 },
+  saveOverrideBtn:{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: 'none', background: '#0d1117', color: 'white', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
+  resetOverrideBtn:{ padding: '6px 12px', minHeight: 32, borderRadius: 6, border: '1.5px solid #d5d0c8', background: 'white', color: '#444', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+
+  legacy:     { background: 'white', borderRadius: 10, padding: '8px 12px', boxShadow: '0 1px 2px rgba(0,0,0,.04)' },
+  legacySum:  { fontSize: 12, color: '#666', cursor: 'pointer', padding: '4px 0', userSelect: 'none' },
+  legacyRow:  { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, paddingTop: 6, borderTop: '1px solid #f0ede8' },
 
   zeroBox:    { background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412',
                 borderRadius: 10, padding: '12px 16px' },
