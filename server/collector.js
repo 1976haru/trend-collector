@@ -17,6 +17,7 @@ import { classifyAgencyArticle } from './agencyClassifier.js';
 import { scoreRelevance } from './relevance.js';
 import { fetchOfficialAgencyNews, isOfficialAgencyEnabled, DEFAULT_AGENCY_DOMAINS } from './sources/officialAgency.js';
 import { fetchCustomSourceNews } from './sources/customSources.js';
+import { fetchYouTubeInsightsForKeywords, isYouTubeDataEnabled, isYouTubeTrendsEnabled } from './youtube/index.js';
 
 const GOOGLE_NEWS = 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=';
 const MAX_PER_KEYWORD = 30;
@@ -935,6 +936,18 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     sentiment, mediaCounts, departmentCounts, trending, actionRequired,
   });
 
+  // YouTube 인사이트 — 활성 시에만 호출, 실패해도 보고서는 정상 생성
+  let youtubeInsights = null;
+  if (isYouTubeDataEnabled() || isYouTubeTrendsEnabled()) {
+    try {
+      youtubeInsights = await fetchYouTubeInsightsForKeywords(cfg.keywords || [], { period: '30d', maxResults: 25 });
+      console.log(`[collector] youtube: ${youtubeInsights.items.length} keywords analyzed`);
+    } catch (e) {
+      console.warn('[collector] youtube fetch failed (non-fatal):', e.message);
+      youtubeInsights = { items: [], enabled: false, error: e.message || String(e) };
+    }
+  }
+
   // Google Trends — 활성 시에만 호출, 실패해도 보고서는 정상 생성
   let trendsInsight = null;
   if (isTrendsEnabled() && cfg.googleTrendsEnabled !== false) {
@@ -1000,6 +1013,7 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     summaryText,
     briefingText,
     trendsInsight,                         // Google Trends 결과 (비활성 시 null)
+    youtubeInsights,                       // YouTube 관심도/영상 반응 (비활성 시 null)
     riskLevel,
     extractedCount,
     extractionFailed,

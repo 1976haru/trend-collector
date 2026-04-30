@@ -484,6 +484,48 @@ export async function reportToDocx(report, ctx = {}) {
   }
 
   // ────────────────────────────────────────────
+  // 6.5 YouTube 관심도 및 국민 반응 분석 (활성 시)
+  // ────────────────────────────────────────────
+  const yt = r.youtubeInsights;
+  const ytItems = (yt?.items || []).filter(x => (x.videoCount || 0) > 0 || x.error);
+  if (ytItems.length) {
+    children.push(H2('마. YouTube 관심도 · 국민 반응 분석'));
+    children.push(P('YouTube Data API 의 영상 검색 결과 (조회수 / 댓글 / 좋아요) 와 Google Trends YouTube Search 의 상대 관심도 (0~100) 를 결합한 국민 반응 분석임. 검색량은 정확한 횟수가 아닌 상대 지표임을 유의하여 해석함.', { size: 22 }));
+    const totalVideos   = ytItems.reduce((s, x) => s + (x.videoCount    || 0), 0);
+    const totalViews    = ytItems.reduce((s, x) => s + (x.totalViews    || 0), 0);
+    const totalComments = ytItems.reduce((s, x) => s + (x.totalComments || 0), 0);
+    children.push(P(`최근 30일 기준, 분석된 ${ytItems.length}개 키워드의 YouTube 관련 영상은 총 ${totalVideos}건, 누적 조회수 ${totalViews.toLocaleString('ko-KR')}회, 댓글 ${totalComments.toLocaleString('ko-KR')}건으로 집계됨.`));
+    children.push(makeTable(
+      ['키워드', '관련 영상', '누적 조회수', '댓글', '관심도 등급'],
+      ytItems.map(it => [
+        it.keyword,
+        `${it.videoCount || 0}건`,
+        `${(it.totalViews || 0).toLocaleString('ko-KR')}회`,
+        `${(it.totalComments || 0).toLocaleString('ko-KR')}건`,
+        it.interestLevel || '미미',
+      ]),
+      [22, 13, 25, 15, 25],
+    ));
+    // 상위 영상 TOP 5
+    const allVideos = ytItems.flatMap(x => (x.topVideos || []).map(v => ({ ...v, _kw: x.keyword })))
+      .sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0))
+      .slice(0, 5);
+    if (allVideos.length) {
+      children.push(H2('마-1. 주요 관련 영상 TOP 5'));
+      children.push(makeTable(
+        ['키워드', '제목', '채널', '조회수'],
+        allVideos.map(v => [
+          v._kw,
+          truncate(v.title, 60),
+          v.channelTitle || '—',
+          `${(v.viewCount || 0).toLocaleString('ko-KR')}회`,
+        ]),
+        [16, 50, 18, 16],
+      ));
+    }
+  }
+
+  // ────────────────────────────────────────────
   // 7. 시사점 및 대응 방향
   // ────────────────────────────────────────────
   children.push(pageBreak());

@@ -15,6 +15,7 @@ import {
 } from '../../services/api.js';
 import { fmtFull, fmtRelative, fmtShort } from '../../utils/datetime.js';
 import ClippingPanel from './ClippingPanel.jsx';
+import YouTubeInsightCard from './YouTubeInsightCard.jsx';
 
 function safeUrl(u = '') {
   const s = String(u).trim();
@@ -908,6 +909,9 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
       {/* 보고용 핵심 요약 카드 — 한눈에 파악 */}
       <HighlightCard report={report} />
+
+      {/* YouTube 관심도 / 영상 반응 (활성 시) */}
+      {report.youtubeInsights && <YouTubeInsightCard youtubeInsights={report.youtubeInsights} />}
 
       {/* 부정 50%↑ 경고 */}
       {(sentiment.negativePct || 0) >= 50 && (

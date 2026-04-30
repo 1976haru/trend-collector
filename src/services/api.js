@@ -183,6 +183,10 @@ export const getSourceSettings    = ()           => request('GET',  '/api/admin/
 export const saveSourceSettings   = (patch)      => request('PUT',  '/api/admin/source-settings', patch);
 export const testNaver            = (keyword)    => request('POST', '/api/admin/source-settings/test-naver', { keyword });
 export const getNaverEnvDiagnostics = ()         => request('GET',  '/api/admin/naver-env-diagnostics');
+
+// YouTube 관심도 / 영상 반응
+export const getYoutubeInsights = (keyword, period = '30d') =>
+  request('GET', `/api/youtube/insights?keyword=${encodeURIComponent(keyword)}&period=${encodeURIComponent(period)}`);
 export const testSearch           = (body)       => request('POST', '/api/admin/test-search', body);
 export const simulateSearch       = (body)       => request('POST', '/api/admin/simulate-search', body);
 

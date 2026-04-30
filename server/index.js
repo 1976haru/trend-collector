@@ -32,6 +32,7 @@ import { embedImagesInReport } from './imageCache.js';
 import { isKakaoEnabled } from './notifyKakao.js';
 import { isNaverConfigured, getNaverSource, fetchNaverNews, reloadNaver, preloadNaver, getNaverConfig, getNaverEnvDiagnostics } from './sources/naver.js';
 import { isTrendsEnabled, getProvider as getTrendsProvider } from './trends/googleTrends.js';
+import { fetchYouTubeInsights, isYouTubeDataEnabled, isYouTubeTrendsEnabled, getYouTubeDiagnostics } from './youtube/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, '..');
@@ -98,6 +99,17 @@ app.get('/api/health', async (_req, res) => {
       configured:     isTrendsEnabled(),
       provider:       getTrendsProvider(),
     },
+    youtube: (() => {
+      const d = getYouTubeDiagnostics();
+      return {
+        dataApiReady:    d.dataApi.ready,                   // 검색 + 영상 통계 사용 가능
+        dataApiEnabled:  d.dataApi.enabledFlag,
+        hasApiKey:       d.dataApi.hasYOUTUBE_API_KEY,
+        apiKeyMasked:    d.dataApi.apiKeyMasked || null,    // 값 자체 노출 X
+        trendsEnabled:   d.trends.enabled,
+        trendsProvider:  d.trends.provider,
+      };
+    })(),
     schedule: {
       autoCollect:   cfg.autoCollect !== false,
       mode:          sch.mode,
@@ -912,6 +924,22 @@ api.get('/reports/:id/quality-check', async (req, res) => {
     const r = await loadReport(req.params.id);
     res.json(buildQualityReport(r));
   } catch { res.status(404).json({ error: 'not found' }); }
+});
+
+// ──────────────────────────────────────────────
+// YouTube 관심도 / 영상 반응
+// ──────────────────────────────────────────────
+api.get('/youtube/insights', async (req, res) => {
+  try {
+    const keyword = String(req.query.keyword || '').trim();
+    if (!keyword) return res.status(400).json({ error: 'keyword 쿼리가 필요합니다.' });
+    const period  = ['7d', '30d', '90d', '12m'].includes(req.query.period) ? req.query.period : '30d';
+    const r = await fetchYouTubeInsights(keyword, { period, maxResults: 25 });
+    // 진단 객체 안의 apiKeyMasked 만 응답에 포함 — apiKey 평문 X
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ error: e.message || String(e) });
+  }
 });
 
 // ──────────────────────────────────────────────

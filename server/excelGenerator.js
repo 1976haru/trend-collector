@@ -426,8 +426,80 @@ export async function reportToXlsx(report, ctx = {}) {
   addDeptResponseSheet(wb, reportActive);
   addArticleEditSheet(wb, reportActive);
   addExcludedSheet(wb, excludedArticles);
+  addYouTubeInsightSheet(wb, reportActive);
+  addYouTubeVideosSheet(wb, reportActive);
 
   return wb.xlsx.writeBuffer().then(b => Buffer.from(b));
+}
+
+// YouTube 관심도 — 키워드별 요약
+function addYouTubeInsightSheet(wb, report) {
+  const ws = wb.addWorksheet('YouTube관심도');
+  ws.columns = [
+    { header: '키워드',     key: 'kw',     width: 18 },
+    { header: '관련 영상',  key: 'count',  width: 12 },
+    { header: '누적 조회수', key: 'views', width: 16 },
+    { header: '댓글',       key: 'comm',   width: 12 },
+    { header: '좋아요',     key: 'likes',  width: 12 },
+    { header: '관심도 등급', key: 'level',  width: 12 },
+    { header: '설명',       key: 'text',   width: 70 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  const items = report.youtubeInsights?.items || [];
+  for (const it of items) {
+    ws.addRow({
+      kw:    it.keyword,
+      count: it.videoCount || 0,
+      views: it.totalViews || 0,
+      comm:  it.totalComments || 0,
+      likes: it.totalLikes || 0,
+      level: it.interestLevel || '미미',
+      text:  it.insightText || (it.error ? `⚠️ ${it.error}` : ''),
+    });
+  }
+  if (!items.length) ws.addRow({ kw: '', count: 0, views: 0, comm: 0, likes: 0, level: '', text: 'YouTube 분석이 비활성화되어 있거나 결과가 없습니다.' });
+  autoFitColumns(ws);
+}
+
+// YouTube 영상 목록 — 키워드별 topVideos 합쳐서
+function addYouTubeVideosSheet(wb, report) {
+  const ws = wb.addWorksheet('YouTube영상목록');
+  ws.columns = [
+    { header: '키워드',   key: 'kw',      width: 16 },
+    { header: '제목',     key: 'title',   width: 60 },
+    { header: '채널',     key: 'channel', width: 24 },
+    { header: '업로드',   key: 'pub',     width: 22 },
+    { header: '조회수',   key: 'views',   width: 14 },
+    { header: '댓글',     key: 'comm',    width: 12 },
+    { header: '좋아요',   key: 'likes',   width: 12 },
+    { header: 'Shorts',   key: 'sh',      width: 8 },
+    { header: 'URL',      key: 'url',     width: 50 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  const items = report.youtubeInsights?.items || [];
+  let total = 0;
+  for (const it of items) {
+    for (const v of (it.topVideos || [])) {
+      const row = ws.addRow({
+        kw:      it.keyword,
+        title:   v.title || '',
+        channel: v.channelTitle || '',
+        pub:     v.publishedAt ? fmtKST(v.publishedAt) : '',
+        views:   v.viewCount || 0,
+        comm:    v.commentCount || 0,
+        likes:   v.likeCount || 0,
+        sh:      v.shortform ? 'Y' : '',
+        url:     v.url || '',
+      });
+      if (v.url) {
+        row.getCell('url').value = { text: v.url, hyperlink: v.url };
+        row.getCell('url').font  = { color: { argb: 'FFDC2626' }, underline: true, name: 'Malgun Gothic' };
+      }
+      total++;
+    }
+  }
+  if (total === 0) ws.addRow({ kw: '', title: 'YouTube 영상이 없습니다 (API 미설정 또는 결과 없음)', channel: '', pub: '', views: 0, comm: 0, likes: 0, sh: '', url: '' });
+  autoFitColumns(ws);
 }
 
 // 제외 기사 시트 — 사용자가 제외 처리한 기사들의 사유 / 매체 / URL / 매칭 키워드
