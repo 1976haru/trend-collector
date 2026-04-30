@@ -21,11 +21,19 @@ export default function CustomSourceManager({ stored, active, onChanged }) {
   const [renderGuideOpen, setRenderGuideOpen] = useState(false);
   const [officialEnabled, setOfficialEnabled] = useState(stored?.officialAgencyEnabled !== false);
   const [expandKW,        setExpandKW]        = useState(stored?.expandKeywords !== false);
+  const [diag,            setDiag]            = useState(null);
   const fileRef = useRef(null);
 
   useEffect(() => { setItems(stored?.customSources || []); }, [stored]);
   useEffect(() => { setOfficialEnabled(stored?.officialAgencyEnabled !== false); }, [stored?.officialAgencyEnabled]);
   useEffect(() => { setExpandKW(stored?.expandKeywords !== false); }, [stored?.expandKeywords]);
+
+  // 환경변수 진단 — 카드 자동 로드 + 새로고침 버튼 제공
+  async function loadDiag() {
+    try { setDiag(await api.getNaverEnvDiagnostics()); }
+    catch (e) { /* admin 권한 만료 등 — 무시 */ }
+  }
+  useEffect(() => { loadDiag(); }, []);
 
   async function refresh() {
     try {
@@ -152,6 +160,63 @@ NAVER_CLIENT_SECRET=발급받은_값`}</pre>
         )}
       </div>
 
+      {/* 환경변수 진단 카드 — Render 무료 플랜에서 NAVER_* 인식 여부 확인 */}
+      <div style={S.panel}>
+        <div style={S.label}>🔬 환경변수 진단 (Naver API)</div>
+        <div style={S.note}>
+          Render Environment 에 등록한 <code>NAVER_*</code> 값이 서버에서 정상 인식되는지 확인합니다.
+          <strong> 값 자체는 절대 노출되지 않으며</strong>, 존재 여부 / 정규화 결과 / Client ID 앞 4자리만 표시합니다.
+          Render Free 플랜 Shell 접근 없이도 진단 가능합니다.
+        </div>
+        {diag ? (
+          <>
+            <div style={S.diagTable}>
+              <DiagRow label="NAVER_ENABLED 환경변수" value={diag.env.hasNAVER_ENABLED} hint={diag.env.hasNAVER_ENABLED ? '(설정됨)' : '(미설정 — 기본 ON 으로 처리됨)'} />
+              <DiagRow label="NAVER_ENABLED 해석 결과" value={diag.env.naverEnabledNormalized} hint={diag.env.naverEnabledNormalized ? '✓ 활성으로 해석' : '✗ false / 0 / no / off 로 해석됨 — true 또는 1 로 변경 필요'} />
+              <DiagRow label="NAVER_CLIENT_ID 환경변수" value={diag.env.hasNAVER_CLIENT_ID} hint={diag.env.hasNAVER_CLIENT_ID ? `(설정됨, ${diag.env.naverClientIdMaskedFromEnv})` : '(미설정)'} />
+              <DiagRow label="NAVER_CLIENT_SECRET 환경변수" value={diag.env.hasNAVER_CLIENT_SECRET} hint={diag.env.hasNAVER_CLIENT_SECRET ? '(설정됨)' : '(미설정)'} />
+              <DiagRow label="환경변수 → env 경로 사용 가능" value={diag.env.completeForEnv} hint={diag.env.completeForEnv ? '✓ Render 재배포 후에도 영구 유지' : (diag.env.partialMissing ? '⚠️ 일부만 설정됨 — ID / SECRET 둘 다 필요' : '— 환경변수 미사용')} />
+              <hr style={{ border: 0, borderTop: '1px solid #f0ede8', margin: '6px 0' }} />
+              <DiagRow label="관리자 저장값 (admin)" value={diag.admin.naverEnabled && diag.admin.hasNaverClientId && diag.admin.hasNaverClientSecret} hint={diag.admin.hasNaverClientId ? `(저장됨, ${diag.admin.naverClientIdMaskedFromAdmin})` : '(저장값 없음)'} />
+              <hr style={{ border: 0, borderTop: '1px solid #f0ede8', margin: '6px 0' }} />
+              <DiagRow label={<strong>실제 사용 출처</strong>} value={diag.effective.configured}
+                hint={
+                  diag.effective.source === 'env'   ? `🟢 Render Environment (${diag.effective.clientIdMasked})` :
+                  diag.effective.source === 'admin' ? `🟡 관리자 저장값 (${diag.effective.clientIdMasked}) — 무료 플랜 재배포 시 초기화 위험` :
+                  '🔴 미설정 — Naver 수집 비활성'
+                } />
+            </div>
+
+            {/* 부분 누락 / 잘못 해석 케이스 한국어 안내 */}
+            {diag.env.partialMissing && (
+              <div style={S.warn}>
+                ⚠️ Render Environment 에 일부 변수만 등록되어 있습니다.
+                {!diag.env.hasNAVER_CLIENT_ID && <> <code>NAVER_CLIENT_ID</code></>}
+                {!diag.env.hasNAVER_CLIENT_ID && !diag.env.hasNAVER_CLIENT_SECRET && ' 와 '}
+                {!diag.env.hasNAVER_CLIENT_SECRET && <code>NAVER_CLIENT_SECRET</code>}
+                {' '}을 추가로 등록한 뒤 <strong>Manual Deploy → Clear build cache & deploy</strong> 를 실행하세요.
+              </div>
+            )}
+            {diag.env.hasNAVER_ENABLED && !diag.env.naverEnabledNormalized && (
+              <div style={S.warn}>
+                ⚠️ <code>NAVER_ENABLED</code> 가 비활성으로 해석되었습니다.{' '}
+                <code>true</code>, <code>1</code>, <code>yes</code>, <code>on</code> 중 하나로 변경하세요. (대소문자 / 앞뒤 공백 무관)
+              </div>
+            )}
+            {!diag.env.hasNAVER_ENABLED && !diag.env.hasNAVER_CLIENT_ID && !diag.env.hasNAVER_CLIENT_SECRET && (
+              <div style={S.tip}>
+                💡 Render Environment 에 <code>NAVER_*</code> 환경변수가 아직 등록되지 않았습니다.
+                위 안내 카드의 가이드에 따라 등록하면 무료 플랜에서도 재배포 후 키가 영구 유지됩니다.
+              </div>
+            )}
+
+            <button onClick={loadDiag} style={S.btnLight}>↻ 진단 새로고침</button>
+          </>
+        ) : (
+          <div style={S.note}>⏳ 진단 정보를 불러오는 중…</div>
+        )}
+      </div>
+
       {/* 백업 / 복원 카드 */}
       <div style={S.panel}>
         <div style={S.label}>💾 설정 백업 / 복원</div>
@@ -254,6 +319,17 @@ NAVER_CLIENT_SECRET=발급받은_값`}</pre>
   );
 }
 
+function DiagRow({ label, value, hint }) {
+  const ok = !!value;
+  return (
+    <div style={S.diagRow}>
+      <span style={S.diagDot}>{ok ? '✅' : '⛔'}</span>
+      <span style={S.diagLabel}>{label}</span>
+      <span style={S.diagHint}>{hint}</span>
+    </div>
+  );
+}
+
 const S = {
   panel:    { background: 'white', borderRadius: 12, padding: '14px 16px', boxShadow: '0 1px 2px rgba(0,0,0,.06)', marginBottom: 11 },
   label:    { fontSize: 12, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 9 },
@@ -284,4 +360,11 @@ const S = {
   smBtnDanger: { padding: '4px 10px', minHeight: 28, borderRadius: 6, border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
   ok:       { background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 10 },
   err:      { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 10 },
+  warn:     { background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 8, marginTop: 8, lineHeight: 1.6 },
+
+  diagTable:{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 4px', background: '#fafaf6', borderRadius: 7, fontSize: 12.5 },
+  diagRow:  { display: 'grid', gridTemplateColumns: '24px 220px 1fr', alignItems: 'center', gap: 8, padding: '4px 6px' },
+  diagDot:  { fontSize: 14, textAlign: 'center' },
+  diagLabel:{ fontSize: 12.5, color: '#0d1117' },
+  diagHint: { fontSize: 11.5, color: '#666', fontFamily: 'ui-monospace, monospace' },
 };

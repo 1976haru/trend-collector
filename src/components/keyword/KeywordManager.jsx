@@ -411,11 +411,21 @@ export default function KeywordManager({
               disabled={!health?.sources?.naverConfigured} />
             <span>
               <strong>Naver News</strong> 검색 API 사용 (국내 매체 커버리지)
-              {!health?.sources?.naverConfigured && (
-                <span style={S.warn}>
-                  {' '}⚠️ Naver API 미설정 — <strong>관리 탭 → 📰 뉴스 소스 설정</strong> 에서 입력하세요.
-                </span>
-              )}
+              {!health?.sources?.naverConfigured && (() => {
+                const d = health?.sources?.naverEnvDiagnostics;
+                const partialEnv = d && d.partialMissing;
+                const enabledMisinterpreted = d && d.hasNAVER_ENABLED && !d.naverEnabledNormalized;
+                let msg = ' ⚠️ Naver API 미설정 — 관리 → 뉴스 소스 설정 또는 Render Environment 에서 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 을 설정하세요.';
+                if (partialEnv) {
+                  const miss = [];
+                  if (!d.hasNAVER_CLIENT_ID)     miss.push('NAVER_CLIENT_ID');
+                  if (!d.hasNAVER_CLIENT_SECRET) miss.push('NAVER_CLIENT_SECRET');
+                  msg = ` ⚠️ Render Environment 에 ${miss.join(' / ')} 가 누락되어 있습니다. (관리 → 뉴스 소스 설정 → 환경변수 진단 참고)`;
+                } else if (enabledMisinterpreted) {
+                  msg = ' ⚠️ NAVER_ENABLED 가 비활성으로 해석됨. true 또는 1 로 변경 후 재배포 (Clear build cache & deploy) 하세요.';
+                }
+                return <span style={S.warn}>{msg}</span>;
+              })()}
             </span>
           </label>
           {(config.useGoogleNews === false && !config.useNaverNews) && (

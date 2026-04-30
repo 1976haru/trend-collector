@@ -30,7 +30,7 @@ import { reportToDocx, clippingToDocx, analysisToDocx } from './wordGenerator.js
 import { reportToXlsx } from './excelGenerator.js';
 import { embedImagesInReport } from './imageCache.js';
 import { isKakaoEnabled } from './notifyKakao.js';
-import { isNaverConfigured, getNaverSource, fetchNaverNews, reloadNaver, preloadNaver } from './sources/naver.js';
+import { isNaverConfigured, getNaverSource, fetchNaverNews, reloadNaver, preloadNaver, getNaverConfig, getNaverEnvDiagnostics } from './sources/naver.js';
 import { isTrendsEnabled, getProvider as getTrendsProvider } from './trends/googleTrends.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,19 +64,35 @@ app.get('/api/health', async (_req, res) => {
     smtp:            smtpConfigured(),
     kakao:           isKakaoEnabled(),
     adminConfigured: !!process.env.ADMIN_PASSWORD,
-    sources: {
-      googleNews:           cfg.useGoogleNews !== false,
-      naverNews:            !!cfg.useNaverNews && isNaverConfigured(),
-      naverConfigured:      isNaverConfigured(),
-      naverSource,                         // 'env' | 'admin' | 'none' — env 우선
-      hasNaverClientId:     !!process.env.NAVER_CLIENT_ID || !!stored.naverClientId,
-      hasNaverClientSecret: !!process.env.NAVER_CLIENT_SECRET || !!stored.naverClientSecret,
-      // 4 소스 활성 상태 — UI 진단 카드용
-      officialAgencyEnabled: stored.officialAgencyEnabled !== false,
-      customSourcesCount:   (stored.customSources || []).filter(s => s.enabled !== false).length,
-      expandKeywords:       stored.expandKeywords !== false,
-      lastNaverTest:        stored.lastNaverTest || null,
-    },
+    sources: (() => {
+      const naverCfg = getNaverConfig();
+      const envDiag  = naverCfg.envDiagnostics;
+      return {
+        googleNews:           cfg.useGoogleNews !== false,
+        naverNews:            !!cfg.useNaverNews && isNaverConfigured(),
+        naverConfigured:      isNaverConfigured(),
+        naverSource,                         // 'env' | 'admin' | 'none' — env 우선
+        // 호환 필드 — 기존 UI
+        hasNaverClientId:     !!process.env.NAVER_CLIENT_ID || !!stored.naverClientId,
+        hasNaverClientSecret: !!process.env.NAVER_CLIENT_SECRET || !!stored.naverClientSecret,
+        // 환경변수 진단 — 값은 노출하지 않고 boolean + 마스킹 ID 만
+        naverEnvDiagnostics:  {
+          hasNAVER_ENABLED:        envDiag.hasNAVER_ENABLED,
+          naverEnabledNormalized:  envDiag.naverEnabledNormalized,
+          hasNAVER_CLIENT_ID:      envDiag.hasNAVER_CLIENT_ID,
+          hasNAVER_CLIENT_SECRET:  envDiag.hasNAVER_CLIENT_SECRET,
+          completeForEnv:          envDiag.completeForEnv,
+          partialMissing:          envDiag.partialMissing,
+        },
+        // 활성 자격증명의 마스킹 ID — 값 자체 노출 X (앞 4자만)
+        clientIdMasked:       naverCfg.clientIdMasked || null,
+        // 4 소스 활성 상태 — UI 진단 카드용
+        officialAgencyEnabled: stored.officialAgencyEnabled !== false,
+        customSourcesCount:   (stored.customSources || []).filter(s => s.enabled !== false).length,
+        expandKeywords:       stored.expandKeywords !== false,
+        lastNaverTest:        stored.lastNaverTest || null,
+      };
+    })(),
     trends: {
       enabled:        isTrendsEnabled() && cfg.googleTrendsEnabled !== false,
       configured:     isTrendsEnabled(),
@@ -399,9 +415,8 @@ api.get('/admin/source-settings', async (_req, res) => {
   try {
     const stored = await loadSourceSettings();
     const cfg    = await loadConfig();
-    const envHas = process.env.NAVER_ENABLED === 'true'
-                    && !!process.env.NAVER_CLIENT_ID
-                    && !!process.env.NAVER_CLIENT_SECRET;
+    const envDiag = getNaverEnvDiagnostics();
+    const naverCfg = getNaverConfig();
     res.json({
       stored: safeSourceSettings(stored),
       // 키워드 화면 토글값 (config.json 의 useGoogleNews / useNaverNews)
@@ -412,7 +427,55 @@ api.get('/admin/source-settings', async (_req, res) => {
       // 실제 활성 상태
       naverConfigured: isNaverConfigured(),
       naverSource:     getNaverSource(),
-      envHasNaver:     envHas,
+      envHasNaver:     envDiag.completeForEnv,
+      // 진단 — 값은 노출하지 않는다
+      naverEnvDiagnostics: {
+        hasNAVER_ENABLED:        envDiag.hasNAVER_ENABLED,
+        naverEnabledNormalized:  envDiag.naverEnabledNormalized,
+        hasNAVER_CLIENT_ID:      envDiag.hasNAVER_CLIENT_ID,
+        hasNAVER_CLIENT_SECRET:  envDiag.hasNAVER_CLIENT_SECRET,
+        completeForEnv:          envDiag.completeForEnv,
+        partialMissing:          envDiag.partialMissing,
+      },
+      clientIdMasked: naverCfg.clientIdMasked || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 환경변수 진단 전용 — UI "환경변수 진단" 카드용. Secret 값은 절대 노출하지 않음.
+api.get('/admin/naver-env-diagnostics', async (_req, res) => {
+  try {
+    const stored   = await loadSourceSettings();
+    const envDiag  = getNaverEnvDiagnostics();
+    const naverCfg = getNaverConfig();
+    res.json({
+      env: {
+        hasNAVER_ENABLED:        envDiag.hasNAVER_ENABLED,
+        naverEnabledNormalized:  envDiag.naverEnabledNormalized,
+        hasNAVER_CLIENT_ID:      envDiag.hasNAVER_CLIENT_ID,
+        hasNAVER_CLIENT_SECRET:  envDiag.hasNAVER_CLIENT_SECRET,
+        completeForEnv:          envDiag.completeForEnv,
+        partialMissing:          envDiag.partialMissing,
+        // env 경로의 ID 만 마스킹 노출 — admin 저장값 ID 와 구분되도록
+        naverClientIdMaskedFromEnv: envDiag.naverClientIdMasked || null,
+      },
+      admin: {
+        naverEnabled:           !!stored.naverEnabled,
+        hasNaverClientId:       !!stored.naverClientId,
+        hasNaverClientSecret:   !!stored.naverClientSecret,
+        // admin 저장값 ID 도 마스킹 — Client ID 는 비밀이 아니지만 전체 노출은 피함
+        naverClientIdMaskedFromAdmin: stored.naverClientId
+          ? (String(stored.naverClientId).slice(0, 4) + '*'.repeat(Math.max(0, String(stored.naverClientId).length - 4)))
+          : null,
+      },
+      effective: {
+        configured:     naverCfg.configured,
+        source:         naverCfg.source,         // 'env' | 'admin' | 'none'
+        clientIdMasked: naverCfg.clientIdMasked || null,
+      },
+      lastNaverTest: stored.lastNaverTest || null,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

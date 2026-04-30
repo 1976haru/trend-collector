@@ -299,15 +299,20 @@ export async function saveSourceSettings(patch) {
   }
 }
 
-/** API 응답용 — clientSecret 은 절대 평문 반환하지 않고 hasNaverClientSecret 로만 노출. */
+/** API 응답용 — clientSecret / clientId 모두 평문 반환 금지.
+ *  UI 는 placeholder 로 마스킹 ID 를 표시하고, 사용자가 새 값을 입력하지 않으면
+ *  서버는 saveSourceSettings 에서 기존 값을 보존한다. */
 export function safeSourceSettings(s = {}) {
   const at = { ...DEFAULT_SOURCE_SETTINGS.autoTracking, ...(s.autoTracking || {}) };
   // customSources 는 평문 노출 OK (URL/이름은 secret 아님)
   const cs = Array.isArray(s.customSources) ? s.customSources : [];
+  const idStr = String(s.naverClientId || '').trim();
+  const naverClientIdMasked = idStr ? (idStr.slice(0, 4) + '*'.repeat(Math.max(0, idStr.length - 4))) : '';
   return {
     naverEnabled:           !!s.naverEnabled,
-    naverClientId:          s.naverClientId || '',     // clientId 는 공개 식별자라 평문 OK
-    hasNaverClientId:       !!s.naverClientId,
+    naverClientId:          '',                        // 평문 노출 금지 — 마스킹 필드 사용
+    naverClientIdMasked,
+    hasNaverClientId:       !!idStr,
     hasNaverClientSecret:   !!s.naverClientSecret,
     officialAgencyEnabled:  s.officialAgencyEnabled !== false,
     officialAgencyDomains:  Array.isArray(s.officialAgencyDomains) ? s.officialAgencyDomains : [],

@@ -182,6 +182,7 @@ export const sendTestMail         = (to, settings, applyBeforeSend) =>
 export const getSourceSettings    = ()           => request('GET',  '/api/admin/source-settings');
 export const saveSourceSettings   = (patch)      => request('PUT',  '/api/admin/source-settings', patch);
 export const testNaver            = (keyword)    => request('POST', '/api/admin/source-settings/test-naver', { keyword });
+export const getNaverEnvDiagnostics = ()         => request('GET',  '/api/admin/naver-env-diagnostics');
 export const testSearch           = (body)       => request('POST', '/api/admin/test-search', body);
 export const simulateSearch       = (body)       => request('POST', '/api/admin/simulate-search', body);
 

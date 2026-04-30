@@ -5,6 +5,11 @@
 // 설정 우선순위 (재배포 후에도 키가 유지되도록 env 를 1순위로):
 //   1) 환경변수            NAVER_CLIENT_ID + NAVER_CLIENT_SECRET (NAVER_ENABLED 기본 true)
 //   2) 관리자 화면 저장값  data/sourceSettings.json (naverEnabled + clientId + clientSecret)
+//
+// ⚠️ Render Free 진단성 정책:
+//   - 어떤 호출자도 process.env.NAVER_* 를 직접 읽지 않는다 — 항상 getNaverConfig() 사용.
+//   - NAVER_ENABLED 는 대소문자/공백 모두 정규화 (true/TRUE/True/1/yes/y/on).
+//   - getNaverEnvDiagnostics() 는 boolean + 마스킹 ID 만 노출 — secret 값 절대 X.
 // ─────────────────────────────────────────────
 
 import { loadSourceSettings } from '../store.js';
@@ -16,21 +21,85 @@ let cachedCreds  = null;          // null = 미설정, 객체 = 활성 자격증
 let cachedSource = 'none';
 let _loaded      = false;
 
+// 환경변수 boolean 정규화 — Render UI 에서 어떤 케이스로 입력해도 인식.
+// 미지정 (undefined) 은 true 로 간주 — 사용자가 키만 등록한 일반 케이스를 허용.
+function normalizeEnabledFlag(raw) {
+  if (raw === undefined || raw === null) return true;          // 미지정 = 기본 ON
+  const s = String(raw).trim().toLowerCase();
+  if (s === '') return true;                                   // 공백만 = 기본 ON
+  if (['false', '0', 'no', 'n', 'off', 'disabled'].includes(s)) return false;
+  if (['true',  '1', 'yes', 'y', 'on', 'enabled'].includes(s)) return true;
+  // 그 외 알 수 없는 값은 안전하게 false (의도적 비활성으로 해석)
+  return false;
+}
+
+// 환경변수 진단 — boolean + 마스킹 ID 만 노출. Secret 값은 절대 노출하지 않는다.
+export function getNaverEnvDiagnostics() {
+  const rawEnabled = process.env.NAVER_ENABLED;
+  const rawId      = process.env.NAVER_CLIENT_ID;
+  const rawSecret  = process.env.NAVER_CLIENT_SECRET;
+  const idTrim     = String(rawId || '').trim();
+  const secretTrim = String(rawSecret || '').trim();
+  const enabledNorm = normalizeEnabledFlag(rawEnabled);
+  return {
+    hasNAVER_ENABLED:        rawEnabled !== undefined,
+    naverEnabledRaw:         rawEnabled === undefined ? null : '(설정됨, 값은 비공개)',  // 값 자체는 노출 X
+    naverEnabledNormalized:  enabledNorm,
+    hasNAVER_CLIENT_ID:      !!idTrim,
+    naverClientIdMasked:     idTrim ? (idTrim.slice(0, 4) + '*'.repeat(Math.max(0, idTrim.length - 4))) : '',
+    hasNAVER_CLIENT_SECRET:  !!secretTrim,
+    // 부분 누락 진단 — 사용자에게 한국어 안내를 만들기 위한 단서
+    completeForEnv:          enabledNorm && !!idTrim && !!secretTrim,
+    partialMissing:          enabledNorm && (!idTrim || !secretTrim),
+  };
+}
+
 function envHasNaverCreds() {
-  // NAVER_ENABLED 미지정 시 true 로 간주 — 키만 등록하면 바로 사용 가능하도록
-  const enabled = process.env.NAVER_ENABLED === undefined
-    ? true
-    : process.env.NAVER_ENABLED === 'true';
-  return !!(enabled && process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET);
+  const d = getNaverEnvDiagnostics();
+  return d.completeForEnv;
+}
+
+/**
+ * 단일 진실 출처 (Single Source of Truth) — 모든 호출자는 이 함수만 사용한다.
+ * 캐시된 결과 기준이므로 동기 호출 가능. 자격증명이 변경되면 reloadNaver() 후 preloadNaver().
+ *
+ * @returns {{
+ *   configured: boolean,
+ *   source: 'env'|'admin'|'none',
+ *   clientId: string|null,        // 호출자 내부에서만 사용 — 응답으로 노출 금지
+ *   clientSecret: string|null,    // 동일
+ *   clientIdMasked: string,
+ *   envDiagnostics: object,
+ * }}
+ */
+export function getNaverConfig() {
+  const env = getNaverEnvDiagnostics();
+  if (cachedCreds) {
+    return {
+      configured:     true,
+      source:         cachedSource,
+      clientId:       cachedCreds.clientId,
+      clientSecret:   cachedCreds.clientSecret,
+      clientIdMasked: cachedCreds.clientId
+        ? (cachedCreds.clientId.slice(0, 4) + '*'.repeat(Math.max(0, cachedCreds.clientId.length - 4)))
+        : '',
+      envDiagnostics: env,
+    };
+  }
+  return {
+    configured: false, source: 'none',
+    clientId: null, clientSecret: null, clientIdMasked: '',
+    envDiagnostics: env,
+  };
 }
 
 async function resolveCredentials() {
-  // 1) 환경변수 (Render 등 배포 환경)
+  // 1) 환경변수 (Render 등 배포 환경) — 우선
   if (envHasNaverCreds()) {
     return {
       source:       'env',
-      clientId:     process.env.NAVER_CLIENT_ID,
-      clientSecret: process.env.NAVER_CLIENT_SECRET,
+      clientId:     String(process.env.NAVER_CLIENT_ID || '').trim(),
+      clientSecret: String(process.env.NAVER_CLIENT_SECRET || '').trim(),
     };
   }
 
@@ -40,8 +109,8 @@ async function resolveCredentials() {
     if (stored.naverEnabled && stored.naverClientId && stored.naverClientSecret) {
       return {
         source:       'admin',
-        clientId:     stored.naverClientId,
-        clientSecret: stored.naverClientSecret,
+        clientId:     String(stored.naverClientId).trim(),
+        clientSecret: String(stored.naverClientSecret).trim(),
       };
     }
   } catch { /* fall through */ }
@@ -186,7 +255,20 @@ export async function fetchNaverNews(keyword, { display = 30, sort = 'date', ret
     creds = cachedCreds;
   }
   if (!creds) {
-    throw new Error('Naver API 가 설정되지 않았습니다. 관리 → 뉴스 소스 설정 또는 환경변수 NAVER_* 를 확인하세요.');
+    // 부분 누락 케이스를 한국어로 구체 진단
+    const d = getNaverEnvDiagnostics();
+    let detail = '';
+    if (d.partialMissing) {
+      const miss = [];
+      if (!d.hasNAVER_CLIENT_ID)     miss.push('NAVER_CLIENT_ID');
+      if (!d.hasNAVER_CLIENT_SECRET) miss.push('NAVER_CLIENT_SECRET');
+      detail = ` Render Environment 에 ${miss.join(' / ')} 가 누락되어 있습니다.`;
+    } else if (d.hasNAVER_ENABLED && !d.naverEnabledNormalized) {
+      detail = ' NAVER_ENABLED 가 false / 0 / no / off 로 해석되었습니다. true 또는 1 로 설정하세요.';
+    } else if (!d.hasNAVER_ENABLED && !d.hasNAVER_CLIENT_ID && !d.hasNAVER_CLIENT_SECRET) {
+      detail = ' Render Environment 에 NAVER_* 환경변수가 등록되지 않았습니다.';
+    }
+    throw new Error('Naver API 가 설정되지 않았습니다.' + detail + ' 관리 → 뉴스 소스 설정 또는 Render Environment 에서 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 을 확인하세요.');
   }
   const url = `${NAVER_API}?query=${encodeURIComponent(keyword)}&display=${Math.min(display, 100)}&sort=${sort}`;
   const ctrl  = new AbortController();

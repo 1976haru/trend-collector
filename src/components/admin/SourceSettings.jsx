@@ -34,7 +34,8 @@ export default function SourceSettings() {
         useGoogleNews:     !!r.preferences?.useGoogleNews,
         useNaverNews:      !!r.preferences?.useNaverNews,
         naverEnabled:      !!r.stored.naverEnabled,
-        naverClientId:     r.stored.naverClientId || '',
+        // 평문 ID 는 서버에서 노출하지 않음 — 사용자가 새로 입력할 때만 form 에 들어감
+        naverClientId:     '',
         naverClientSecret: '',
         autoTracking: {
           moj:         r.stored.autoTracking?.moj         !== false,
@@ -161,8 +162,10 @@ export default function SourceSettings() {
           <span>Naver API 활성화 (관리자 키 사용)</span>
         </label>
 
-        <Field label="Client ID" placeholder="Naver 개발자센터에서 발급된 ID"
-          value={form.naverClientId} onChange={v => setForm({ ...form, naverClientId: v })} />
+        <Field label="Client ID"
+          placeholder={stored.hasNaverClientId ? `저장됨 (${stored.naverClientIdMasked || '****'}) — 변경하려면 입력` : 'Naver 개발자센터에서 발급된 ID'}
+          value={form.naverClientId} onChange={v => setForm({ ...form, naverClientId: v })}
+          hint={stored.hasNaverClientId ? '※ 빈 칸으로 두면 기존 저장된 ID 가 유지됩니다.' : ''} />
 
         <Field label="Client Secret" type="password"
           placeholder={stored.hasNaverClientSecret ? '저장된 비밀 (변경하려면 입력)' : '비밀 키 입력'}
