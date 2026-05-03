@@ -19,6 +19,7 @@ import YouTubeInsightCard from './YouTubeInsightCard.jsx';
 import CollectionDiagnosticsCard from './CollectionDiagnosticsCard.jsx';
 import RelevanceQualityCard from './RelevanceQualityCard.jsx';
 import SearchQualityCard from './SearchQualityCard.jsx';
+import AgentResultsCard from './AgentResultsCard.jsx';
 
 function safeUrl(u = '') {
   const s = String(u).trim();
@@ -932,6 +933,9 @@ export default function ReportDetail({ report, onClose, onEmail, onReportRefresh
 
       {/* 보고용 핵심 요약 카드 — 한눈에 파악 */}
       <HighlightCard report={report} />
+
+      {/* 에이전트 분석 결과 — 7개 에이전트 결과 종합 */}
+      <AgentResultsCard report={report} />
 
       {/* 검색 품질 진단 — 도메인 의도 / 자동 제외 사유 / 재검사 버튼 */}
       <SearchQualityCard report={report} onRefresh={reloadReport} />

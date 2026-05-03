@@ -11,6 +11,7 @@ import TestSearch     from './TestSearch.jsx';
 import TrackingLinks  from './TrackingLinks.jsx';
 import ReportMetaSettings from './ReportMetaSettings.jsx';
 import ChangelogTab   from './ChangelogTab.jsx';
+import AgentSettings  from './AgentSettings.jsx';
 
 export default function AdminPanel({ initialTab, onTabConsumed }) {
   const [feedback, setFeedback] = useState([]);
@@ -84,6 +85,10 @@ export default function AdminPanel({ initialTab, onTabConsumed }) {
           style={{ ...S.tab, ...(tab === 'reportMeta' ? S.tabOn : {}) }}>
           📋 보고서 정보
         </button>
+        <button onClick={() => setTab('agents')}
+          style={{ ...S.tab, ...(tab === 'agents' ? S.tabOn : {}) }}>
+          🤖 에이전트 설정
+        </button>
         <button onClick={() => setTab('stats')}
           style={{ ...S.tab, ...(tab === 'stats' ? S.tabOn : {}) }}>
           📈 추출 실패 도메인 {stats.length > 0 && <span style={S.tabCount}>{stats.length}</span>}
@@ -93,7 +98,7 @@ export default function AdminPanel({ initialTab, onTabConsumed }) {
           📜 변경이력
         </button>
         <div style={{ flex: 1 }} />
-        {!['mail', 'source', 'search', 'tracking', 'reportMeta', 'changelog'].includes(tab) && (
+        {!['mail', 'source', 'search', 'tracking', 'reportMeta', 'changelog', 'agents'].includes(tab) && (
           <button onClick={refresh} disabled={loading} style={S.refresh}>
             {loading ? '⏳' : '↻'} 새로고침
           </button>
@@ -106,6 +111,7 @@ export default function AdminPanel({ initialTab, onTabConsumed }) {
       {tab === 'tracking'   && <TrackingLinks />}
       {tab === 'reportMeta' && <ReportMetaSettings />}
       {tab === 'changelog'  && <ChangelogTab />}
+      {tab === 'agents'     && <AgentSettings />}
 
       {error && <div style={S.err}>⚠️ {error}</div>}
 

@@ -430,8 +430,150 @@ export async function reportToXlsx(report, ctx = {}) {
   addExcludedSheet(wb, excludedArticles);
   addYouTubeInsightSheet(wb, reportActive);
   addYouTubeVideosSheet(wb, reportActive);
+  addAgentAnalysisSheet(wb, reportActive);
+  addAgentArticleScoresSheet(wb, reportActive);
 
   return wb.xlsx.writeBuffer().then(b => Buffer.from(b));
+}
+
+// ── 에이전트 분석 시트 ─────────────────────
+function addAgentAnalysisSheet(wb, report) {
+  const ws = wb.addWorksheet('에이전트분석');
+  ws.columns = [
+    { header: '에이전트', key: 'agent',   width: 16 },
+    { header: '항목',     key: 'item',    width: 24 },
+    { header: '값',       key: 'value',   width: 24 },
+    { header: '비고',     key: 'note',    width: 80 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  const ar = report.agentResults;
+  if (!ar) {
+    ws.addRow({ agent: '—', item: '에이전트 결과 없음', value: '', note: '구버전 리포트이거나 에이전트가 비활성 상태입니다.' });
+    autoFitColumns(ws);
+    return;
+  }
+  const meta = ar.runMeta || {};
+  ws.addRow({ agent: 'meta', item: 'LLM 활성',     value: meta.llmEnabled ? `예 (${meta.llmProvider || ''})` : '아니요', note: 'LLM_AGENT_ENABLED + API 키 모두 있을 때 활성' });
+  ws.addRow({ agent: 'meta', item: '생성 시각',     value: meta.generatedAt || '', note: `${meta.durationMs || '?'}ms 소요` });
+
+  // collection
+  if (ar.collection && !ar.collection.skipped) {
+    ws.addRow({ agent: 'collection', item: '총 수집 건수', value: ar.collection.rawCount || 0, note: ar.collection.collectionSummary || '' });
+    for (const [k, v] of Object.entries(ar.collection.sourceCounts || {})) {
+      ws.addRow({ agent: 'collection', item: `소스: ${k}`, value: v, note: '' });
+    }
+    if (ar.collection.unusedKeywords?.length) {
+      ws.addRow({ agent: 'collection', item: '검색 누락 의심 키워드', value: ar.collection.unusedKeywords.length, note: ar.collection.unusedKeywords.join(', ') });
+    }
+  }
+  // relevance
+  if (ar.relevance && !ar.relevance.skipped) {
+    ws.addRow({ agent: 'relevance', item: '관련성 통과율', value: `${ar.relevance.passRate || 0}%`, note: ar.relevance.summary });
+    const d = ar.relevance.distribution || {};
+    ws.addRow({ agent: 'relevance', item: '분포 (high/medium/low/none)', value: `${d.high || 0}/${d.medium || 0}/${d.low || 0}/${d.none || 0}`, note: '' });
+    ws.addRow({ agent: 'relevance', item: '자동 제외 건수', value: ar.relevance.autoExcludedCount || 0, note: '도메인/노이즈 사전 매칭 + 점수 0 자동 처리' });
+    ws.addRow({ agent: 'relevance', item: '공공기관 도메인 매칭', value: ar.relevance.publicDomainHits || 0, note: '법무·검찰·공공기관 단어가 본문에 있는 기사 수' });
+  }
+  // risk
+  if (ar.risk && !ar.risk.skipped) {
+    const lvlFill = ar.risk.level === '긴급' ? 'FFFEE2E2' : ar.risk.level === '주의' ? 'FFFEF3C7' : 'FFDCFCE7';
+    const r1 = ws.addRow({ agent: 'risk', item: '위험 수준', value: ar.risk.level || '안정', note: ar.risk.summary });
+    r1.getCell('value').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lvlFill } };
+    ws.addRow({ agent: 'risk', item: '판단 근거', value: (ar.risk.reasons || []).length, note: (ar.risk.reasons || []).join(' / ') });
+    ws.addRow({ agent: 'risk', item: '대응 필요 기사', value: ar.risk.urgentCount || 0, note: '긴급 + 주의 우선순위 기사 수' });
+    ws.addRow({ agent: 'risk', item: '중앙·방송사 부정', value: ar.risk.centralNegativeCount || 0, note: '중앙언론 + 부정 라벨 기사 수' });
+  }
+  // report
+  if (ar.report && !ar.report.skipped) {
+    ws.addRow({ agent: 'report', item: '일일 보고', value: '', note: ar.report.dailyBrief || '' });
+    if (ar.report.executiveSummary) {
+      ws.addRow({ agent: 'report', item: '상급자 요약', value: '', note: ar.report.executiveSummary.replace(/\n/g, ' / ') });
+    }
+    if (ar.report.responseRecommendation) {
+      ws.addRow({ agent: 'report', item: '대응 권고', value: '', note: ar.report.responseRecommendation.replace(/\n/g, ' / ') });
+    }
+    if (ar.report.monitoringKeywords?.length) {
+      ws.addRow({ agent: 'report', item: '모니터링 키워드', value: ar.report.monitoringKeywords.length, note: ar.report.monitoringKeywords.join(', ') });
+    }
+  }
+  // publicity
+  if (ar.publicity && !ar.publicity.skipped) {
+    ws.addRow({ agent: 'publicity', item: '기관 배포자료',     value: ar.publicity.officialReleaseCount || 0, note: '' });
+    ws.addRow({ agent: 'publicity', item: '언론 재인용',       value: ar.publicity.recitationCount || 0, note: '' });
+    ws.addRow({ agent: 'publicity', item: '중앙·방송사 노출', value: ar.publicity.centralCoverage || 0, note: '' });
+    ws.addRow({ agent: 'publicity', item: '추적 클릭',         value: ar.publicity.clickCount || 0, note: '' });
+    ws.addRow({ agent: 'publicity', item: '홍보 효과 등급',    value: ar.publicity.publicityRating || '일반', note: ar.publicity.publicityInsight || '' });
+  }
+  // quality
+  if (ar.quality && !ar.quality.skipped) {
+    const gradeFill = ar.quality.grade === '재검토 필요' ? 'FFFEE2E2'
+      : ar.quality.grade === '주의' ? 'FFFEF3C7'
+      : ar.quality.grade === '양호' ? 'FFDBEAFE' : 'FFDCFCE7';
+    const r2 = ws.addRow({ agent: 'quality', item: '품질 점수', value: `${ar.quality.qualityScore || 0} (${ar.quality.grade || '—'})`, note: ar.quality.summary });
+    r2.getCell('value').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: gradeFill } };
+    ws.addRow({ agent: 'quality', item: '권장 다운로드', value: (ar.quality.recommendedDownloadType || '').toUpperCase(), note: ar.quality.pdfRisk ? `PDF 위험: ${ar.quality.pdfReasons.join(' / ')}` : '' });
+    for (const w of (ar.quality.warnings || [])) {
+      const r3 = ws.addRow({ agent: 'quality', item: `경고 [${w.level}]`, value: w.code, note: w.message });
+      const fill = w.level === 'error' ? 'FFFEE2E2' : w.level === 'warn' ? 'FFFEF3C7' : 'FFEFF6FF';
+      r3.getCell('item').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+    }
+  }
+  // suggestion
+  if (ar.suggestion && !ar.suggestion.skipped) {
+    ws.addRow({ agent: 'suggestion', item: '요약', value: '', note: ar.suggestion.summary || '' });
+    for (const w of (ar.suggestion.suggestedExcludeKeywords || [])) {
+      ws.addRow({ agent: 'suggestion', item: '제외 키워드 제안', value: w.word, note: w.reason });
+    }
+    for (const d of (ar.suggestion.suggestedDomainRules || [])) {
+      ws.addRow({ agent: 'suggestion', item: '도메인 룰 제안', value: d.domain, note: `${d.ruleType} · ${d.reason}` });
+    }
+    for (const k of (ar.suggestion.suggestedKeywordCheck || [])) {
+      ws.addRow({ agent: 'suggestion', item: '검색 누락 의심', value: k.keyword, note: k.reason });
+    }
+  }
+  autoFitColumns(ws);
+}
+
+// 기사별 에이전트 점수 시트 — 관련성/위험/홍보/품질 핵심 지표를 한 행에
+function addAgentArticleScoresSheet(wb, report) {
+  const ws = wb.addWorksheet('기사별에이전트점수');
+  ws.columns = [
+    { header: '#',             key: 'idx',     width: 5 },
+    { header: '제목',          key: 'title',   width: 60 },
+    { header: '매체',          key: 'source',  width: 16 },
+    { header: '키워드',        key: 'kw',      width: 14 },
+    { header: '관련성 점수',   key: 'rscore',  width: 12 },
+    { header: '관련성 등급',   key: 'rlevel',  width: 12 },
+    { header: '위험도',        key: 'prio',    width: 10 },
+    { header: '감정',          key: 'sent',    width: 10 },
+    { header: '홍보 등급',     key: 'rating',  width: 12 },
+    { header: '재인용',        key: 'recite',  width: 10 },
+    { header: '본문 추출',     key: 'extr',    width: 10 },
+    { header: '공공기관 매칭', key: 'pub',     width: 12 },
+  ];
+  applyHeaderStyle(ws.getRow(1));
+  const articles = (report.articles || []);
+  articles.forEach((a, i) => {
+    const row = ws.addRow({
+      idx: i + 1,
+      title: a.title || '',
+      source: a.source || '',
+      kw: a.keyword || '',
+      rscore: a.relevanceScore ?? 0,
+      rlevel: a.relevanceLevel || '—',
+      prio: a.priority || '참고',
+      sent: a.sentiment?.label || '',
+      rating: a.publicityRating || '—',
+      recite: a.reCiteCount || 0,
+      extr: a.extracted ? '✓' : '×',
+      pub: a.publicDomainHit ? '✓' : '',
+    });
+    const pf = priorityFill(a.priority);
+    if (pf) row.getCell('prio').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: pf } };
+    row.getCell('sent').font = { color: { argb: sentimentArgb(a.sentiment?.label) }, name: 'Malgun Gothic' };
+  });
+  if (!articles.length) ws.addRow({ idx: '—', title: '활성 기사 없음', source: '', kw: '', rscore: '', rlevel: '', prio: '', sent: '', rating: '', recite: '', extr: '', pub: '' });
+  autoFitColumns(ws);
 }
 
 // YouTube 관심도 — 키워드별 요약

@@ -39,6 +39,11 @@ export const getVersionInfo = ()    => request('GET',  '/api/version');
 export const getConfig = ()         => request('GET',  '/api/config');
 export const putConfig = (patch)    => request('PUT',  '/api/config', patch);
 
+// 에이전트 진단 — settings + LLM 활성 여부
+export const getAgentStatus = ()    => request('GET',  '/api/agent-status');
+export const saveAgentSettings = (agentSettings) =>
+  request('PUT', '/api/config', { agentSettings });
+
 // 수집·리포트
 export const collectNow  = ()       => request('POST', '/api/collect');
 export const listReports = ()       => request('GET',  '/api/reports');

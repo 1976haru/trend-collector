@@ -22,6 +22,7 @@ import { fetchYouTubeInsightsForKeywords, isYouTubeDataEnabled, isYouTubeTrendsE
 import { detectSearchIntent } from './searchIntent.js';
 import { rescoreReport } from './relevanceScorer.js';
 import { cleanArticleContent } from './articleCleaner.js';
+import { runAgents, getLlmConfig } from './agents/index.js';
 
 /**
  * activeArticles 헬퍼 — 모든 분석 / 출력에서 반드시 이 함수만 사용한다.
@@ -1104,9 +1105,22 @@ export async function runCollection({ trigger = 'manual' } = {}) {
     },
   };
 
+  // 8) 에이전트 파이프라인 — 7개 에이전트 순차 실행 + agentResults 첨부
+  try {
+    const agentSettings = cfg.agentSettings || {};
+    report.agentResults = runAgents(report, {
+      settings: agentSettings,
+      tracking: { totalLinks: 0, totalClicks: 0 },     // tracking 합산은 saveReport 직후 별도 sync 단계에서 보강됨
+      llmConfig: getLlmConfig(),
+    });
+  } catch (e) {
+    console.warn('[collector] agents pipeline failed (non-fatal):', e.message);
+    report.agentResults = { runMeta: { error: e.message || String(e), generatedAt: new Date().toISOString() } };
+  }
+
   await saveReport(report);
 
-  // 8) 기관 배포자료 자동 추적 — 수집 직후 자동 sync.
+  // 9) 기관 배포자료 자동 추적 — 수집 직후 자동 sync.
   //    실패해도 리포트 자체는 저장된 상태이므로 throw 하지 않는다.
   try {
     const sourceSettings = await loadSourceSettings();
@@ -1119,6 +1133,21 @@ export async function runCollection({ trigger = 'manual' } = {}) {
       totalAutoLinks: sync.totalAutoLinks,
       at: new Date().toISOString(),
     };
+    // tracking 결과를 반영하여 publicityAgent 만 재실행 (다른 에이전트는 동일 결과)
+    try {
+      const trackingTotals = {
+        totalLinks: sync.totalAutoLinks || 0,
+        totalClicks: 0,                 // 신규 자동 등록 시점 — 누적 클릭은 0
+      };
+      const refreshed = runAgents(report, {
+        settings: cfg.agentSettings || {},
+        tracking: trackingTotals,
+        llmConfig: getLlmConfig(),
+      });
+      report.agentResults = refreshed;
+    } catch (e2) {
+      console.warn('[collector] agents re-run after tracking sync failed (non-fatal):', e2.message);
+    }
     await saveReport(report);
   } catch (e) {
     console.warn('[collector] auto-track sync failed (non-fatal):', e.message);

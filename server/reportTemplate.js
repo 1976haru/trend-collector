@@ -99,6 +99,83 @@ function sentClass(label) {
   return label === '긍정' ? 'pos' : label === '부정' ? 'neg' : 'neu';
 }
 
+// ── 에이전트 분석 결과 — HTML 블록 ────────────
+function renderAgentBlock(ar) {
+  if (!ar) return '';
+  const meta = ar.runMeta || {};
+  const sec = (title, body) => `<div class="agent-sec"><h4>${esc(title)}</h4>${body}</div>`;
+  const skipped = name => `<div class="agent-skipped">⚪ ${esc(name)} 비활성화됨</div>`;
+
+  const parts = [];
+
+  // 수집
+  if (ar.collection?.skipped) parts.push(sec('① 수집', skipped('수집 에이전트')));
+  else if (ar.collection)
+    parts.push(sec('① 수집', `<p>${esc(ar.collection.collectionSummary || '')}</p>`));
+
+  // 관련성
+  if (ar.relevance?.skipped) parts.push(sec('② 관련성 검증', skipped('관련성 검증')));
+  else if (ar.relevance) {
+    const d = ar.relevance.distribution || {};
+    parts.push(sec('② 관련성 검증',
+      `<p>${esc(ar.relevance.summary || '')}</p>` +
+      `<p style="font-size:9.5pt;color:#555;">분포: high ${d.high || 0} · medium ${d.medium || 0} · low ${d.low || 0} · none ${d.none || 0}</p>`));
+  }
+
+  // 위험
+  if (ar.risk?.skipped) parts.push(sec('③ 위험 이슈', skipped('위험 감지')));
+  else if (ar.risk) {
+    parts.push(sec('③ 위험 이슈',
+      `<p><strong>${esc(ar.risk.level || '안정')}</strong> — ${esc(ar.risk.summary || '')}</p>` +
+      (ar.risk.reasons?.length ? `<p style="font-size:9.5pt;color:#555;">근거: ${esc(ar.risk.reasons.join(' / '))}</p>` : '')));
+  }
+
+  // 보고서 작성
+  if (ar.report?.skipped) parts.push(sec('④ 보고서 작성', skipped('보고서 작성')));
+  else if (ar.report) {
+    const exec = ar.report.executiveSummary
+      ? `<pre style="background:#fff;padding:8pt;border:.5pt solid #d5d0c8;border-radius:4pt;white-space:pre-wrap;font-family:inherit;font-size:9.5pt;">${esc(ar.report.executiveSummary)}</pre>` : '';
+    const resp = ar.report.responseRecommendation
+      ? `<p><strong>대응 권고</strong></p><pre style="background:#fff;padding:8pt;border:.5pt solid #d5d0c8;border-radius:4pt;white-space:pre-wrap;font-family:inherit;font-size:9.5pt;">${esc(ar.report.responseRecommendation)}</pre>` : '';
+    const mon = ar.report.monitoringKeywords?.length
+      ? `<p style="font-size:9.5pt;color:#555;">모니터링 키워드: ${esc(ar.report.monitoringKeywords.join(', '))}</p>` : '';
+    parts.push(sec('④ 보고서 작성',
+      `<p>${esc(ar.report.dailyBrief || '')}</p>${exec}${resp}${mon}`));
+  }
+
+  // 홍보성과
+  if (ar.publicity?.skipped) parts.push(sec('⑤ 홍보성과', skipped('홍보성과')));
+  else if (ar.publicity) {
+    const p = ar.publicity;
+    parts.push(sec('⑤ 홍보성과',
+      `<p><strong>${esc(p.publicityRating)}</strong> — ${esc(p.publicityInsight || '')}</p>` +
+      `<p style="font-size:9.5pt;color:#555;">배포 ${p.officialReleaseCount || 0} · 재인용 ${p.recitationCount || 0} · 중앙 ${p.centralCoverage || 0} · 클릭 ${p.clickCount || 0}</p>`));
+  }
+
+  // 품질 점검
+  if (ar.quality?.skipped) parts.push(sec('⑥ 품질 점검', skipped('품질 점검')));
+  else if (ar.quality) {
+    const warns = (ar.quality.warnings || [])
+      .map(w => `<li style="font-size:9.5pt;">[${esc(w.level.toUpperCase())}] ${esc(w.message)}</li>`).join('');
+    parts.push(sec('⑥ 품질 점검',
+      `<p><strong>${ar.quality.qualityScore || 0}점 (${esc(ar.quality.grade || '')})</strong> — 권장 다운로드: ${esc((ar.quality.recommendedDownloadType || '').toUpperCase())}</p>` +
+      (warns ? `<ul style="margin:4pt 0;padding-left:18pt;">${warns}</ul>` : '<p style="font-size:9.5pt;color:#555;">— 특이 경고 없음.</p>')));
+  }
+
+  // 개선 제안
+  if (ar.suggestion?.skipped) parts.push(sec('⑦ 개선 제안', skipped('개선 제안')));
+  else if (ar.suggestion) {
+    parts.push(sec('⑦ 개선 제안',
+      `<p>${esc(ar.suggestion.summary || '')}</p>`));
+  }
+
+  return `
+  <h2>🤖 에이전트 종합 판단</h2>
+  <div class="agent-meta">${meta.llmEnabled ? `LLM ${esc(meta.llmProvider || '')} 보강 모드` : 'LLM 비활성 — 규칙 기반'} · ${meta.durationMs || '?'}ms · ${esc(meta.generatedAt || '')}</div>
+  <div class="agent-grid">${parts.join('')}</div>
+  `;
+}
+
 // ── 기사 한 건의 신문 카드 형태 섹션 ────────────
 function renderArticleCard(a, i, includeImages = true) {
   const u        = safeUrl(a.url);
@@ -212,6 +289,7 @@ export function renderReportHtml(report, opts = {}) {
     summaryText = '',
     sourceCounts = {},
     includeImages = true,
+    agentResults = null,
   } = report;
 
   // excluded=true 기사는 모든 출력에서 자동 제외
@@ -301,6 +379,13 @@ export function renderReportHtml(report, opts = {}) {
   .toc li { margin-bottom: 3pt; font-size: 10pt; }
   .toc a  { color: #0d1117; text-decoration: none; }
   .toc .src { color: #888; font-size: 9.5pt; }
+
+  .agent-meta { font-size: 9pt; color: #666; margin: 2pt 0 6pt; }
+  .agent-grid { display: block; }
+  .agent-sec  { background:#fafaf6; border:.5pt solid #d5d0c8; border-radius:4pt; padding:8pt 12pt; margin: 4pt 0; page-break-inside: avoid; }
+  .agent-sec h4 { margin: 0 0 4pt; font-size: 11pt; color:#0d1117; }
+  .agent-sec p  { margin: 2pt 0; font-size: 10pt; }
+  .agent-skipped { font-size: 10pt; color:#888; }
 
   .issuesBox { background:#fafaf6; border:.5pt solid #d5d0c8; border-radius:4pt; padding:8pt 12pt; margin: 4pt 0 8pt; }
   .issuesBox h3 { margin: 0 0 4pt; font-size: 11pt; }
@@ -434,6 +519,8 @@ export function renderReportHtml(report, opts = {}) {
   </div>
 
   ${trending.length ? `<div class="alert">📈 <strong>급상승 이슈</strong> — ${trending.slice(0, 5).map(t => `${esc(t.keyword)} (${t.prev}→${t.curr})`).join(', ')}</div>` : ''}
+
+  ${renderAgentBlock(agentResults)}
 
   ${negativeIssues.length ? `
   <div class="issuesBox">

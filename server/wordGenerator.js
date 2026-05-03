@@ -602,6 +602,15 @@ export async function reportToDocx(report, ctx = {}) {
     children.push(P('— 식별된 기관 배포자료 없음.', { size: 20 }));
   }
 
+  // ────────────────────────────────────────────
+  // 9. 에이전트 종합 판단 (agentResults 가 있을 때만)
+  // ────────────────────────────────────────────
+  if (r.agentResults) {
+    children.push(pageBreak());
+    children.push(H1('9. 에이전트 종합 판단'));
+    appendAgentSections(children, r.agentResults);
+  }
+
   // 푸터 마무리
   children.push(P(' ', { size: 18 }));
   children.push(P('— 본 보고서는 Trend Collector 가 자동 생성한 내부 업무용 자료이며, 외부 배포 시 검토가 필요함. —', {
@@ -629,6 +638,113 @@ export async function reportToDocx(report, ctx = {}) {
   });
 
   return Packer.toBuffer(doc);
+}
+
+// ── 에이전트 결과 — Word 섹션 ────────────────
+function appendAgentSections(children, ar) {
+  if (!ar) return;
+  const meta = ar.runMeta || {};
+  children.push(P(`(${meta.llmEnabled ? `LLM ${meta.llmProvider || ''} 보강 모드` : 'LLM 비활성 — 규칙 기반'} · 생성 시각 ${meta.generatedAt || '—'} · 소요 ${meta.durationMs || '?'}ms)`, { size: 20, color: '666666' }));
+
+  // 가. 에이전트 종합 판단 (수집 + 관련성 + 위험 + 보고서 요약)
+  children.push(H2('가. 종합 판단'));
+  if (ar.collection?.collectionSummary) children.push(dashItem(`수집: ${ar.collection.collectionSummary}`));
+  if (ar.relevance?.summary)            children.push(dashItem(`관련성: ${ar.relevance.summary}`));
+  if (ar.report?.dailyBrief)            children.push(dashItem(`일일 보고: ${ar.report.dailyBrief}`));
+  if (ar.report?.executiveSummary) {
+    children.push(P(' ', { size: 18 }));
+    children.push(P('상급자 보고 요약', { bold: true, size: 22 }));
+    for (const line of String(ar.report.executiveSummary).split('\n')) {
+      if (line.trim()) children.push(P(line, { size: 21 }));
+    }
+  }
+
+  // 나. 주요 위험 이슈
+  children.push(H2('나. 주요 위험 이슈'));
+  if (ar.risk && !ar.risk.skipped) {
+    children.push(dashItem(`위험 수준: ${ar.risk.level}`));
+    if (ar.risk.reasons?.length) children.push(dashItem(`판단 근거: ${ar.risk.reasons.join(' / ')}`));
+    if (ar.risk.urgentArticles?.length) {
+      children.push(makeTable(
+        ['우선순위', '제목', '매체', '부정 키워드'],
+        ar.risk.urgentArticles.slice(0, 8).map(a => [
+          a.priority || '참고',
+          truncate(a.title, 70),
+          a.source || '—',
+          (a.negKeywords || []).slice(0, 4).join(', ') || '—',
+        ]),
+        [12, 50, 18, 20],
+      ));
+    } else {
+      children.push(P('— 대응 필요 기사 없음.', { size: 20 }));
+    }
+  } else {
+    children.push(P('— 위험 감지 에이전트 비활성화됨.', { size: 20 }));
+  }
+
+  // 다. 대응 권고
+  children.push(H2('다. 대응 권고'));
+  if (ar.report && !ar.report.skipped && ar.report.responseRecommendation) {
+    for (const line of String(ar.report.responseRecommendation).split('\n')) {
+      if (line.trim()) children.push(dashItem(line));
+    }
+  } else {
+    children.push(P('— 보고서 작성 에이전트 비활성화 또는 권고 없음.', { size: 20 }));
+  }
+  if (ar.report?.monitoringKeywords?.length) {
+    children.push(P(`모니터링 키워드: ${ar.report.monitoringKeywords.join(', ')}`, { size: 21 }));
+  }
+
+  // 라. 홍보성과 평가
+  children.push(H2('라. 홍보성과 평가'));
+  if (ar.publicity && !ar.publicity.skipped) {
+    const p = ar.publicity;
+    children.push(makeTable(
+      ['지표', '값'],
+      [
+        ['기관 배포자료',     `${p.officialReleaseCount || 0}건`],
+        ['언론 재인용',       `${p.recitationCount || 0}건`],
+        ['중앙·방송사 노출', `${p.centralCoverage || 0}건`],
+        ['추적 클릭',         `${p.clickCount || 0}회`],
+        ['홍보 효과 등급',    p.publicityRating || '일반'],
+      ],
+      [40, 60],
+    ));
+    if (p.publicityInsight) children.push(P(p.publicityInsight, { size: 21 }));
+  } else {
+    children.push(P('— 홍보성과 에이전트 비활성화됨.', { size: 20 }));
+  }
+
+  // 마. 품질 점검 결과
+  children.push(H2('마. 품질 점검 결과'));
+  if (ar.quality && !ar.quality.skipped) {
+    const q = ar.quality;
+    children.push(P(`품질 점수: ${q.qualityScore || 0}점 (${q.grade || '—'}) · 권장 다운로드: ${(q.recommendedDownloadType || '').toUpperCase()}`, { size: 22, bold: true }));
+    if (q.warnings?.length) {
+      for (const w of q.warnings) {
+        children.push(dashItem(`[${w.level.toUpperCase()}] ${w.message}`));
+      }
+    } else {
+      children.push(P('— 특이 경고 없음.', { size: 20 }));
+    }
+  } else {
+    children.push(P('— 품질 점검 에이전트 비활성화됨.', { size: 20 }));
+  }
+
+  // 바. 개선 제안 (suggestion)
+  if (ar.suggestion && !ar.suggestion.skipped) {
+    children.push(H2('바. 개선 제안'));
+    if (ar.suggestion.summary) children.push(P(ar.suggestion.summary, { size: 21 }));
+    if (ar.suggestion.suggestedExcludeKeywords?.length) {
+      children.push(dashItem(`제외 키워드 추천: ${ar.suggestion.suggestedExcludeKeywords.map(w => `${w.word}(×${w.count})`).join(', ')}`));
+    }
+    if (ar.suggestion.suggestedDomainRules?.length) {
+      children.push(dashItem(`도메인 룰 제안: ${ar.suggestion.suggestedDomainRules.length}건 — 첫 도메인 ${ar.suggestion.suggestedDomainRules[0].domain}`));
+    }
+    if (ar.suggestion.suggestedKeywordCheck?.length) {
+      children.push(dashItem(`검색 누락 의심: ${ar.suggestion.suggestedKeywordCheck.map(k => k.keyword).join(', ')}`));
+    }
+  }
 }
 
 // ── 헬퍼 ────────────────────────────────────

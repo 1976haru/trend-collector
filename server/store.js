@@ -70,6 +70,18 @@ const DEFAULT_CONFIG = {
     classification: '내부 검토용',
     purpose:        '법무부 정책 및 주요 업무 관련 언론 보도 동향을 일일 단위로 모니터링하여 신속한 대응 자료로 활용함.',
   },
+
+  // ── 에이전트 ON/OFF (기본 모두 ON) ─────────────
+  // collectionAgent 는 항상 ON 으로 유지 (수집 결과 메타가 다른 에이전트의 입력)
+  agentSettings: {
+    collectionAgent: true,
+    relevanceAgent:  true,
+    riskAgent:       true,
+    reportAgent:     true,
+    publicityAgent:  true,
+    qualityAgent:    true,
+    suggestionAgent: true,
+  },
 };
 
 let configCache = null;

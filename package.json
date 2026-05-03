@@ -1,6 +1,6 @@
 {
   "name": "trend-collector",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "내부 직원용 언론보도 자동 수집 + PDF/메일 발송 MVP",
   "type": "module",

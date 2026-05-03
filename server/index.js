@@ -23,6 +23,7 @@ import { rescoreReport } from './relevanceScorer.js';
 import { cleanArticleContent } from './articleCleaner.js';
 import { CHANGELOG, getAppVersion, getLatest, APP_NAME } from './changelog.js';
 import { runCollection, reextractReport, fetchSourceRaw, simulateSearch } from './collector.js';
+import { getLlmConfig, DEFAULT_AGENT_SETTINGS } from './agents/index.js';
 import { sendMail, isConfigured as smtpConfigured, reloadMailer, preloadMailer, getActiveMailConfig, diagnoseMailError } from './mailer.js';
 import { renderReportHtml, renderReportEmailHtml, renderReportText } from './reportTemplate.js';
 import { renderClippingHtml, buildQualityReport } from './clippingTemplate.js';
@@ -260,6 +261,24 @@ api.get('/config', async (_req, res) => {
   res.json(await loadConfig());
 });
 
+// 에이전트 진단 — LLM 활성 여부 + 기본 설정 (UI 가 표시용으로 사용)
+api.get('/agent-status', async (_req, res) => {
+  const cfg = await loadConfig();
+  const llm = getLlmConfig();
+  res.json({
+    settings:        { ...DEFAULT_AGENT_SETTINGS, ...(cfg.agentSettings || {}) },
+    defaultSettings: DEFAULT_AGENT_SETTINGS,
+    llm: {
+      enabled:    llm.enabled,
+      provider:   llm.provider,
+      configured: llm.hasOpenAI || llm.hasClaude,
+      flag:       llm.flag,
+      hasOpenAI:  llm.hasOpenAI,
+      hasClaude:  llm.hasClaude,
+    },
+  });
+});
+
 api.put('/config', async (req, res) => {
   const allowed = [
     'keywords', 'excludes', 'recipients', 'reportType', 'filterAds', 'requireAllInclude',
@@ -274,6 +293,7 @@ api.put('/config', async (req, res) => {
     'articleViewMode', 'sortNegativeFirst',
     'autoReanalyze',
     'reportMeta',
+    'agentSettings',
   ];
   const patch = {};
   for (const k of allowed) {
@@ -302,6 +322,23 @@ api.put('/config', async (req, res) => {
   }
   if (patch.reportTime && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(patch.reportTime))
     return res.status(400).json({ error: '발송 시각은 HH:MM 형식이어야 합니다 (예: 09:00).' });
+
+  // agentSettings 검증 — 알려진 키 7개의 boolean 만 허용. collectionAgent 는 항상 true.
+  if (patch.agentSettings) {
+    if (typeof patch.agentSettings !== 'object' || Array.isArray(patch.agentSettings))
+      return res.status(400).json({ error: 'agentSettings 는 객체여야 합니다.' });
+    const allowedAgents = [
+      'collectionAgent', 'relevanceAgent', 'riskAgent', 'reportAgent',
+      'publicityAgent', 'qualityAgent', 'suggestionAgent',
+    ];
+    const cur = await loadConfig();
+    const merged = { ...(cur.agentSettings || {}) };
+    for (const k of allowedAgents) {
+      if (k in patch.agentSettings) merged[k] = !!patch.agentSettings[k];
+    }
+    merged.collectionAgent = true;   // 수집 결과 정리는 항상 ON 으로 강제
+    patch.agentSettings = merged;
+  }
 
   const next = await saveConfig(patch);
 
@@ -967,7 +1004,7 @@ async function maybeAutoReanalyze(reportId) {
   const cfg = await loadConfig();
   if (cfg.autoReanalyze === false) return null;
   const orig = await loadReport(reportId);
-  const rec  = recomputeReport(orig);
+  const rec  = recomputeReport(orig, { agentSettings: cfg.agentSettings });
   await saveReport(rec);
   return rec;
 }
@@ -1053,7 +1090,7 @@ api.post('/reports/:id/relevance-recheck', async (req, res) => {
       autoExcludeReasons:  stats.autoExcludeReasons,
     };
     // 통계 재계산 (active 기준)
-    const rec = recomputeReport(orig);
+    const rec = recomputeReport(orig, { agentSettings: cfg.agentSettings });
     await saveReport(rec);
     res.json({
       ok: true,
@@ -1068,7 +1105,8 @@ api.post('/reports/:id/relevance-recheck', async (req, res) => {
 api.post('/reports/:id/reanalyze', async (req, res) => {
   try {
     const orig = await loadReport(req.params.id);
-    const rec  = recomputeReport(orig);
+    const cfg  = await loadConfig();
+    const rec  = recomputeReport(orig, { agentSettings: cfg.agentSettings });
     await saveReport(rec);
     res.json({
       ok: true,

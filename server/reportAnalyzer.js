@@ -15,6 +15,7 @@
 import { analyzeSentiments } from './sentiment.js';
 import { classifyMedia, countByMediaType, MEDIA_TYPES } from './mediaList.js';
 import { countDepartments } from './departments.js';
+import { runAgents, getLlmConfig } from './agents/index.js';
 
 function normalize(s = '') {
   return String(s).toLowerCase().replace(/\s+/g, ' ')
@@ -90,9 +91,10 @@ function buildSummaryText({ articles, keywords, mediaCounts, sentiment, trending
  * 원본 report 객체는 변경하지 않는다.
  *
  * @param {Object} report
+ * @param {Object} [ctx] { agentSettings? } — 에이전트 설정 주입
  * @returns {Object} 새 report (articles 전체 보존, 통계만 갱신)
  */
-export function recomputeReport(report) {
+export function recomputeReport(report, ctx = {}) {
   const allArticles    = report.articles || [];
   // active = excluded=false AND relevancePassed !== false
   // (relevancePassed 가 명시적으로 false 인 기사는 strict 모드 자동 제외 대상)
@@ -193,8 +195,8 @@ export function recomputeReport(report) {
   const neutralIssues  = activeArticles.filter(a => a.sentiment?.label === '중립').slice(0, 5);
   const actionRequired = activeArticles.filter(a => a.priority === '긴급' || a.priority === '주의');
 
-  // 새 report 반환 — articles 원본 보존, 통계만 갱신
-  return {
+  // 새 report — articles 원본 보존, 통계만 갱신
+  const next = {
     ...report,
     mediaTypes: MEDIA_TYPES,
     mediaCounts,
@@ -219,4 +221,22 @@ export function recomputeReport(report) {
     analysisUpdatedAt: new Date().toISOString(),
     needsReanalysis:   false,
   };
+
+  // 에이전트 결과도 함께 재계산 — 기존 결과의 publicity 클릭/링크 수치를 보존
+  // 설정 (agentSettings) 은 호출자가 ctx.agentSettings 로 주입 가능. 미주입 시 기본 ON.
+  try {
+    const prevPub = report.agentResults?.publicity || {};
+    next.agentResults = runAgents(next, {
+      settings: ctx.agentSettings || {},
+      tracking: {
+        totalLinks:  prevPub.trackingLinkCount || 0,
+        totalClicks: prevPub.clickCount        || 0,
+      },
+      llmConfig: getLlmConfig(),
+    });
+  } catch (e) {
+    console.warn('[reportAnalyzer] agents re-run failed (non-fatal):', e.message);
+  }
+
+  return next;
 }
