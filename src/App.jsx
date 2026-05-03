@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────
 
 import { useState, useEffect } from 'react';
-import Header        from './components/layout/Header.jsx';
+import MOJHeader     from './components/layout/MOJHeader.jsx';
 import TabBar        from './components/layout/TabBar.jsx';
 import Login         from './components/auth/Login.jsx';
 import KeywordManager   from './components/keyword/KeywordManager.jsx';
@@ -78,18 +78,24 @@ export default function App() {
 
   return (
     <div style={S.app}>
-      <Header
-        schedule={health?.schedule}
+      <MOJHeader
+        health={health}
         status={rep.current?.riskLevel?.level || (rep.reports[0]?.riskLevel?.level)}
+        onLogout={auth.signOut}
         onFeedback={() => setFeedbackOpen(true)}
+        onHelp={() => setTab('help')}
       />
+
+      {/* 시스템 안내 — 공식 사이트 사칭 방지 */}
+      <div style={S.notice}>
+        본 시스템은 공개 언론보도 및 공개 보도자료를 수집·분석하여 내부 업무 참고자료로 제공하는 시스템입니다.
+      </div>
 
       <main style={S.main}>
         <TabBar
           active={tab}
           onChange={(t) => { setTab(t); if (t !== 'reports') setDetailId(null); }}
           counts={{ reports: rep.reports.length || undefined }}
-          onLogout={auth.signOut}
         />
 
         {(cfg.error || rep.error) && (
@@ -171,9 +177,10 @@ export default function App() {
 }
 
 const S = {
-  app:    { minHeight: '100vh', background: '#f0ede8', fontFamily: "'IBM Plex Sans KR','Apple SD Gothic Neo',sans-serif" },
-  main:   { maxWidth: 880, margin: '0 auto', padding: '12px 12px 60px' },
-  splash: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888', fontSize: 14 },
-  banner: { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030',
-            padding: '8px 12px', borderRadius: 8, fontSize: 12, marginBottom: 10 },
+  app:    { minHeight: '100vh', background: 'var(--moj-bg, #F5F7FA)', fontFamily: "'IBM Plex Sans KR','Apple SD Gothic Neo',sans-serif" },
+  notice: { maxWidth: 1240, margin: '0 auto', padding: '8px 16px', fontSize: 12, color: 'var(--moj-text-sub, #4B5C72)', textAlign: 'center', borderBottom: '1px solid var(--moj-border, #D9E2EC)', background: 'rgba(255,255,255,.6)' },
+  main:   { maxWidth: 1100, margin: '0 auto', padding: '14px 16px 60px' },
+  splash: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--moj-text-sub, #4B5C72)', fontSize: 14 },
+  banner: { background: '#FCE4E4', border: '1px solid #F0BFBF', color: '#8E1A1A',
+            padding: '10px 12px', borderRadius: 6, fontSize: 13, marginBottom: 12 },
 };

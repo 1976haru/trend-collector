@@ -1,0 +1,120 @@
+/* ─────────────────────────────────────────────
+   theme.css — MOJ(법무부) 공공기관 스타일 토큰 + 베이스 리셋
+   ───────────────────────────────────────────── */
+
+:root {
+  /* MOJ 팔레트 */
+  --moj-navy:    #153E75;
+  --moj-navy-dk: #0F2D58;
+  --moj-teal:    #2F7D7A;
+  --moj-bg:      #F5F7FA;
+  --moj-bg-card: #FFFFFF;
+  --moj-border:  #D9E2EC;
+  --moj-border-strong: #B7C4D3;
+  --moj-blue:    #1D70B8;
+  --moj-red:     #D32F2F;
+  --moj-yellow:  #F9A825;
+  --moj-green:   #2E7D32;
+  --moj-text:    #0D1B2A;
+  --moj-text-sub: #4B5C72;
+  --moj-text-mute: #7A8AA0;
+
+  /* 상태 (status) */
+  --status-ok-bg:    #E6F4EA;
+  --status-ok-fg:    #1E5128;
+  --status-warn-bg:  #FFF8E1;
+  --status-warn-fg:  #8C5A00;
+  --status-crit-bg:  #FCE4E4;
+  --status-crit-fg:  #8E1A1A;
+  --status-mute-bg:  #ECEFF3;
+  --status-mute-fg:  #4B5C72;
+
+  /* 정부 상단 바 */
+  --gov-bar-bg:  #1B2533;
+  --gov-bar-fg:  #DCE3EE;
+  --gov-bar-link:#FFFFFF;
+}
+
+/* 기본 리듬 — 폰트 14px+ 보장 (접근성) */
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: 'IBM Plex Sans KR', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--moj-bg);
+  color: var(--moj-text);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+* { box-sizing: border-box; }
+button, input, select, textarea { font-family: inherit; }
+input, select, textarea { font-size: 16px; }   /* 모바일 zoom 방지 */
+a { color: var(--moj-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* 공용 헬퍼 — moj-card 클래스 */
+.moj-card {
+  background: var(--moj-bg-card);
+  border: 1px solid var(--moj-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(15, 45, 88, 0.04);
+}
+.moj-btn-primary {
+  background: var(--moj-navy);
+  color: white;
+  border: 1px solid var(--moj-navy);
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.moj-btn-primary:hover { background: var(--moj-navy-dk); }
+.moj-btn-secondary {
+  background: white;
+  color: var(--moj-navy);
+  border: 1px solid var(--moj-border-strong);
+  border-radius: 6px;
+  padding: 9px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.moj-btn-secondary:hover { background: var(--moj-bg); }
+
+/* 상태 배지 — 색 + 텍스트로 의미 전달 (색만으로 식별 X) */
+.moj-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.moj-status[data-level="ok"]   { background: var(--status-ok-bg);   color: var(--status-ok-fg);   border-color: #BFE0C9; }
+.moj-status[data-level="warn"] { background: var(--status-warn-bg); color: var(--status-warn-fg); border-color: #F4DA9F; }
+.moj-status[data-level="crit"] { background: var(--status-crit-bg); color: var(--status-crit-fg); border-color: #F0BFBF; }
+.moj-status[data-level="mute"] { background: var(--status-mute-bg); color: var(--status-mute-fg); border-color: #D9E2EC; }
+
+/* 모바일 */
+@media (max-width: 768px) {
+  main { padding: 8px !important; }
+  body { font-size: 14px; }
+}
+@media (max-width: 480px) {
+  [data-stats-grid] { grid-template-columns: repeat(2, 1fr) !important; }
+  [data-media-row]  { grid-template-columns: 90px 1fr 50px !important; }
+}
+
+/* 안전영역 */
+header { padding-left: max(14px, env(safe-area-inset-left)) !important;
+         padding-right: max(14px, env(safe-area-inset-right)) !important; }
+
+/* 애니메이션 */
+@keyframes spin   { to { transform: rotate(360deg); } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

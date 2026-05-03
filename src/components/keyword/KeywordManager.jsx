@@ -298,7 +298,7 @@ export default function KeywordManager({
         {excludeKeywords.length > 0 && (
           <div style={S.tagWrap}>
             {excludeKeywords.map(k => (
-              <span key={k} style={{ ...S.tag, background: '#7f1d1d' }}>
+              <span key={k} style={{ ...S.tag, background: 'var(--moj-red, #D32F2F)' }}>
                 {k}
                 <button style={S.rm} onClick={() => onRemoveExclude && onRemoveExclude(k)}>×</button>
               </span>
@@ -434,12 +434,16 @@ export default function KeywordManager({
         </div>
       )}
 
-      {/* 즉시 수집 — 강조 */}
-      <button style={S.collect} onClick={onCollect}
-        disabled={loading || keywords.length === 0}>
-        {loading ? '⏳ 수집 + 본문/이미지 추출 중... (15~30초 소요)'
+      {/* 즉시 수집 — 강조 (페이지 메인 액션) */}
+      <button
+        style={{ ...S.collect, ...(loading || keywords.length === 0 ? { opacity: .55, cursor: 'not-allowed' } : null) }}
+        onClick={onCollect}
+        disabled={loading || keywords.length === 0}
+        aria-label="지금 즉시 수집 시작"
+      >
+        {loading ? '⏳ 수집 + 본문/이미지 추출 중… (15~30초 소요)'
                  : keywords.length === 0 ? '키워드를 먼저 추가하세요'
-                                         : '🔍 지금 즉시 수집'}
+                                         : '🔍  지금 즉시 수집'}
       </button>
 
       {/* 자동 수집 설정 (인라인) */}
@@ -454,88 +458,95 @@ export default function KeywordManager({
   );
 }
 
+const NAVY = 'var(--moj-navy, #153E75)';
+const TEAL = 'var(--moj-teal, #2F7D7A)';
+const BORDER = 'var(--moj-border, #D9E2EC)';
+const BORDER_S = 'var(--moj-border-strong, #B7C4D3)';
+const SUB = 'var(--moj-text-sub, #4B5C72)';
+const MUTE = 'var(--moj-text-mute, #7A8AA0)';
+const BG = 'var(--moj-bg, #F5F7FA)';
+
 const S = {
-  panel:    { background: 'white', borderRadius: 12, padding: 15, marginBottom: 11, boxShadow: '0 1px 2px rgba(0,0,0,.06)' },
-  label:    { fontSize: 10.5, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: 10 },
-  label2:   { fontSize: 10.5, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.7px' },
+  panel:    { background: 'white', border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16, marginBottom: 12, boxShadow: '0 1px 2px rgba(15,45,88,.04)' },
+  label:    { fontSize: 12, fontWeight: 700, color: SUB, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 },
+  label2:   { fontSize: 12, fontWeight: 700, color: SUB, textTransform: 'uppercase', letterSpacing: '.5px' },
   headRow:  { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  orgSel:   { padding: '6px 10px', border: '1.5px solid #d5d0c8', borderRadius: 7, fontSize: 12, background: 'white', fontFamily: 'inherit' },
-  row:      { display: 'flex', gap: 7, marginBottom: 10 },
-  inp:      { flex: 1, border: '2px solid #e5e0d8', borderRadius: 8, padding: '10px 11px', fontSize: 14, fontFamily: 'inherit', outline: 'none', background: '#fafaf8', minHeight: 44 },
-  tagWrap:  { display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 },
-  tag:      { display: 'flex', alignItems: 'center', gap: 4, background: '#0d1117', color: 'white', borderRadius: 20, padding: '4px 11px', fontSize: 12.5 },
-  rm:       { background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, padding: 0, minWidth: 18, minHeight: 18 },
-  emptyHint:{ background: '#fffbeb', border: '1px dashed #fde68a', color: '#92400e',
-              padding: '10px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.6, marginBottom: 8 },
-  clearBtn: { padding: '6px 11px', minHeight: 30, borderRadius: 6, border: '1.5px solid #fecaca',
-              background: '#fff5f5', color: '#991b1b', fontSize: 11.5, fontWeight: 600,
+  orgSel:   { padding: '6px 10px', border: `1px solid ${BORDER_S}`, borderRadius: 6, fontSize: 13, background: 'white', fontFamily: 'inherit' },
+  row:      { display: 'flex', gap: 8, marginBottom: 10 },
+  inp:      { flex: 1, border: `1px solid ${BORDER_S}`, borderRadius: 6, padding: '10px 12px', fontSize: 14, fontFamily: 'inherit', outline: 'none', background: 'white', minHeight: 44 },
+  tagWrap:  { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+  tag:      { display: 'flex', alignItems: 'center', gap: 4, background: NAVY, color: 'white', borderRadius: 14, padding: '4px 11px', fontSize: 13, fontWeight: 600 },
+  rm:       { background: 'none', border: 'none', color: 'rgba(255,255,255,.7)', cursor: 'pointer', fontSize: 15, padding: 0, minWidth: 18, minHeight: 18 },
+  emptyHint:{ background: '#FFF8E1', border: '1px dashed #F4DA9F', color: '#8C5A00',
+              padding: '10px 12px', borderRadius: 6, fontSize: 13, lineHeight: 1.6, marginBottom: 8 },
+  clearBtn: { padding: '7px 12px', minHeight: 32, borderRadius: 6, border: '1px solid #F0BFBF',
+              background: '#FCE4E4', color: '#8E1A1A', fontSize: 12, fontWeight: 600,
               cursor: 'pointer', fontFamily: 'inherit', marginBottom: 10 },
 
-  tabRow:   { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8, padding: '2px', background: '#f0ede8', borderRadius: 8 },
-  tab:      { padding: '7px 11px', minHeight: 34, border: 'none', background: 'transparent', borderRadius: 6,
-              fontSize: 12, fontWeight: 600, color: '#555', cursor: 'pointer', fontFamily: 'inherit',
+  tabRow:   { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10, padding: 4, background: BG, border: `1px solid ${BORDER}`, borderRadius: 6 },
+  tab:      { padding: '8px 12px', minHeight: 36, border: 'none', background: 'transparent', borderRadius: 4,
+              fontSize: 13, fontWeight: 600, color: SUB, cursor: 'pointer', fontFamily: 'inherit',
               display: 'inline-flex', gap: 5, alignItems: 'center' },
-  tabOn:    { background: '#0d1117', color: 'white' },
-  tabBadge: { background: 'rgba(255,255,255,.18)', borderRadius: 10, padding: '0 6px', fontSize: 10.5 },
+  tabOn:    { background: NAVY, color: 'white' },
+  tabBadge: { background: 'rgba(255,255,255,.22)', borderRadius: 10, padding: '0 6px', fontSize: 11 },
 
   catActions:{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 8px' },
-  catCount2: { fontSize: 11, color: '#888' },
-  catSelected: { color: '#0d1117', fontWeight: 700 },
-  catBtnLight:{ padding: '6px 10px', minHeight: 30, borderRadius: 6, border: '1.5px solid #d5d0c8',
-                background: 'white', color: '#444', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  catCount2: { fontSize: 12, color: MUTE },
+  catSelected: { color: NAVY, fontWeight: 700 },
+  catBtnLight:{ padding: '7px 11px', minHeight: 32, borderRadius: 6, border: `1px solid ${BORDER_S}`,
+                background: 'white', color: NAVY, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
 
-  subLabel: { fontSize: 11, fontWeight: 700, color: '#666', marginTop: 4, marginBottom: 5 },
-  subSelected: { color: '#0d1117', marginLeft: 4 },
+  subLabel: { fontSize: 12, fontWeight: 700, color: SUB, marginTop: 4, marginBottom: 6 },
+  subSelected: { color: NAVY, marginLeft: 4 },
 
-  presetWrap:{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '2px 0 6px' },
-  chip:     { padding: '5px 11px', minHeight: 32, borderRadius: 20, border: '1.5px solid #d5d0c8', background: 'white', fontSize: 11.5, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
-  chipOn:   { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
-  chipExt:  { borderStyle: 'dashed', color: '#666' },
-  chipSuggest:{ background: '#eff6ff', borderColor: '#93c5fd', color: '#1d4ed8' },
-  chipIntent: { background: '#fef3c7', borderColor: '#fcd34d', color: '#92400e' },
-  chipAdd:  { padding: '5px 12px', minHeight: 32, borderRadius: 20, border: '1.5px solid #0d1117',
-              background: '#0d1117', color: 'white', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
+  presetWrap:{ display: 'flex', flexWrap: 'wrap', gap: 5, padding: '2px 0 6px' },
+  chip:     { padding: '6px 12px', minHeight: 32, borderRadius: 16, border: `1px solid ${BORDER_S}`, background: 'white', fontSize: 12.5, cursor: 'pointer', color: SUB, fontFamily: 'inherit' },
+  chipOn:   { background: NAVY, color: 'white', borderColor: NAVY, fontWeight: 600 },
+  chipExt:  { borderStyle: 'dashed', color: SUB },
+  chipSuggest:{ background: 'rgba(47,125,122,.10)', borderColor: TEAL, color: TEAL, fontWeight: 600 },
+  chipIntent: { background: 'rgba(29,112,184,.08)', borderColor: 'var(--moj-blue, #1D70B8)', color: 'var(--moj-blue, #1D70B8)', fontWeight: 600 },
+  chipAdd:  { padding: '6px 14px', minHeight: 32, borderRadius: 16, border: `1px solid ${TEAL}`,
+              background: TEAL, color: 'white', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
 
-  extToggle:{ background: 'transparent', border: 'none', color: '#0d1117', fontSize: 12, fontWeight: 600,
+  extToggle:{ background: 'transparent', border: 'none', color: NAVY, fontSize: 13, fontWeight: 600,
               padding: '6px 0', cursor: 'pointer', fontFamily: 'inherit' },
 
-  searchBox:{ background: '#fafaf8', border: '1px solid #f0ede8', borderRadius: 8, padding: '8px 10px', marginBottom: 10 },
-  searchHead:{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 5 },
-  searchEmpty:{ fontSize: 12, color: '#888' },
+  searchBox:{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 6, padding: '10px 12px', marginBottom: 10 },
+  searchHead:{ fontSize: 12, fontWeight: 700, color: SUB, marginBottom: 5 },
+  searchEmpty:{ fontSize: 13, color: MUTE },
 
-  intentRow:{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 },
-  intentBtn:{ padding: '7px 11px', minHeight: 34, borderRadius: 8, border: '1.5px solid #d5d0c8',
-              background: 'white', color: '#444', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
-  intentOn: { background: '#92400e', color: 'white', borderColor: '#92400e' },
-  intentDesc:{ fontSize: 11.5, color: '#666', marginBottom: 6 },
-  intentEmpty:{ fontSize: 11.5, color: '#888' },
+  intentRow:{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  intentBtn:{ padding: '8px 12px', minHeight: 36, borderRadius: 6, border: `1px solid ${BORDER_S}`,
+              background: 'white', color: SUB, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
+  intentOn: { background: TEAL, color: 'white', borderColor: TEAL },
+  intentDesc:{ fontSize: 12, color: SUB, marginBottom: 6 },
+  intentEmpty:{ fontSize: 12, color: MUTE },
 
-  toggle:   { display: 'flex', alignItems: 'center', gap: 7, marginTop: 6, fontSize: 12.5, color: '#444', cursor: 'pointer', minHeight: 32 },
-  btnDark:  { padding: '10px 14px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', background: '#0d1117', color: 'white', fontFamily: 'inherit', minHeight: 44 },
+  toggle:   { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 13, color: SUB, cursor: 'pointer', minHeight: 32 },
+  btnDark:  { padding: '10px 16px', borderRadius: 6, border: `1px solid ${NAVY}`, fontSize: 14, fontWeight: 700, cursor: 'pointer', background: NAVY, color: 'white', fontFamily: 'inherit', minHeight: 44 },
 
   periodRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },
-  periodBtn: { padding: '8px 12px', minHeight: 38, borderRadius: 8, border: '2px solid #e5e0d8', background: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
-  periodOn:  { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
+  periodBtn: { padding: '9px 14px', minHeight: 38, borderRadius: 6, border: `1px solid ${BORDER_S}`, background: 'white', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: SUB, fontFamily: 'inherit' },
+  periodOn:  { background: NAVY, color: 'white', borderColor: NAVY },
   dateRow:   { display: 'flex', gap: 12, marginTop: 10, flexWrap: 'wrap' },
-  dateLabel: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#444' },
-  dateInp:   { padding: '8px 10px', border: '1.5px solid #e5e0d8', borderRadius: 7, outline: 'none', fontSize: 13, fontFamily: 'inherit' },
+  dateLabel: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, color: SUB },
+  dateInp:   { padding: '8px 10px', border: `1px solid ${BORDER_S}`, borderRadius: 6, outline: 'none', fontSize: 14, fontFamily: 'inherit' },
 
-  collect:  { width: '100%', minHeight: 56, padding: 16, borderRadius: 12, border: 'none',
-              background: 'linear-gradient(180deg, #0d1117 0%, #1f2937 100%)',
-              color: 'white', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-              boxShadow: '0 4px 10px rgba(13,17,23,.18)', marginBottom: 12 },
+  collect:  { width: '100%', minHeight: 60, padding: 16, borderRadius: 8, border: `1px solid ${NAVY}`,
+              background: NAVY, color: 'white', fontSize: 16, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              boxShadow: '0 2px 6px rgba(15,45,88,.18)', marginBottom: 14, letterSpacing: '.3px' },
 
-  warn:     { color: '#c53030', fontSize: 11, marginLeft: 4 },
-  warnBox:  { background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
-              padding: '8px 11px', borderRadius: 7, fontSize: 12, marginTop: 8 },
-  errBox:   { background: '#fff5f5', border: '1px solid #ffd0d0', color: '#c53030',
-              padding: '8px 11px', borderRadius: 7, fontSize: 12, marginTop: 8 },
+  warn:     { color: 'var(--moj-red, #D32F2F)', fontSize: 12, marginLeft: 4 },
+  warnBox:  { background: '#FFF8E1', border: '1px solid #F4DA9F', color: '#8C5A00',
+              padding: '9px 12px', borderRadius: 6, fontSize: 13, marginTop: 8 },
+  errBox:   { background: '#FCE4E4', border: '1px solid #F0BFBF', color: '#8E1A1A',
+              padding: '9px 12px', borderRadius: 6, fontSize: 13, marginTop: 8 },
 
-  fieldLabel: { fontSize: 11.5, fontWeight: 600, color: '#444', display: 'block', marginBottom: 5 },
-  intRow:     { display: 'flex', flexWrap: 'wrap', gap: 5 },
-  intBtn:     { minHeight: 38, padding: '6px 12px', borderRadius: 8, border: '2px solid #e5e0d8',
-                background: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#555', fontFamily: 'inherit' },
-  intOn:      { background: '#0d1117', color: 'white', borderColor: '#0d1117' },
-  tipNote:    { background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e',
-                padding: '8px 11px', borderRadius: 8, fontSize: 11.5, lineHeight: 1.6, marginTop: 8 },
+  fieldLabel: { fontSize: 12, fontWeight: 600, color: SUB, display: 'block', marginBottom: 5 },
+  intRow:     { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  intBtn:     { minHeight: 38, padding: '7px 12px', borderRadius: 6, border: `1px solid ${BORDER_S}`,
+                background: 'white', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: SUB, fontFamily: 'inherit' },
+  intOn:      { background: NAVY, color: 'white', borderColor: NAVY },
+  tipNote:    { background: '#FFF8E1', border: '1px solid #F4DA9F', color: '#8C5A00',
+                padding: '9px 12px', borderRadius: 6, fontSize: 12.5, lineHeight: 1.6, marginTop: 8 },
 };
